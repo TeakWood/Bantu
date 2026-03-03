@@ -115,8 +115,17 @@ Epics are **design tasks first**. Never write implementation code until the desi
 ### Phase 1 — Design (do not skip)
 
 1. **Gather requirements**: Read the epic description thoroughly. Ask clarifying questions until the scope is unambiguous.
-2. **Propose architecture**: Write up the design — data flow, affected modules, API changes, config changes, edge cases. Be specific enough that the author can spot gaps.
-3. **Stop and validate**: Present the design to the author and **wait for explicit approval**. Do not proceed to implementation until they confirm. If they request changes, revise and re-present.
+2. **Propose architecture**: Write up the design — data flow, affected modules, API changes, config changes, edge cases. Be specific enough that reviewers can spot gaps. Post it as a bd comment and submit for review:
+   ```bash
+   bd comments add <epic-id> "<design proposal>"
+   bd set-state <epic-id> review=ready-for-review --reason "Design ready for review" --json
+   ```
+3. **Viharapala reviews first**: Viharapala evaluates the design (not code — no quality gates) and sets either `review=viharapala-approved` or `review=changes-required`. If changes are required, revise the design comment and resubmit.
+4. **Author review**: Once Viharapala sets `review=viharapala-approved`, **Navakanth Gandavarapu** manually reviews the design and sets the final approval:
+   ```bash
+   bd set-state <epic-id> review=approved --reason "Design approved" --json
+   ```
+5. **Do not proceed** to Phase 2 until `review=approved` is set by the author. Silpi must poll or wait — never skip this gate.
 
 ### Phase 2 — Break down into feature tasks
 
@@ -150,7 +159,7 @@ The script will exit with an error if `CLAUDECODE` is set (i.e. if accidentally 
 2. **Silpi** (fresh `claude -p`): implement, test, commit, submit for review
 3. **Viharapala** (fresh `claude -p`): review, comment, set verdict
 4. If `changes-required` → back to Silpi with review comments (new session)
-5. If `approved` → squash merge to main, push, close task
+5. If `approved` (by both Viharapala + author for epics; by Viharapala for feature tasks) → squash merge to main, push, close task
 6. Repeat for next task
 
 ### Rules

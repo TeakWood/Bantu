@@ -57,6 +57,40 @@ log "Orchestrator started (Silpi + Viharapala)."
 
 while true; do
 
+    # ── 0. Check for epics awaiting author review ─────────────────────────────
+    PENDING_EPICS=$(bd query "label=review:viharapala-approved" --json 2>/dev/null || echo "[]")
+    PENDING_COUNT=$(echo "$PENDING_EPICS" | python3 -c "
+import sys, json
+tasks = json.load(sys.stdin)
+print(len([t for t in tasks if t.get('type') == 'epic']))
+" 2>/dev/null || echo "0")
+
+    if [ "$PENDING_COUNT" -gt 0 ]; then
+        log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log "AUTHOR REVIEW REQUIRED — $PENDING_COUNT epic(s) approved by Viharapala, awaiting your sign-off."
+        log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "$PENDING_EPICS" | python3 -c "
+import sys, json
+tasks = [t for t in json.load(sys.stdin) if t.get('type') == 'epic']
+for t in tasks:
+    print(f\"  Epic {t['id']}: {t['title']}\")
+"
+        log ""
+        log "For each epic above:"
+        log "  1. Review the design proposal:"
+        log "       bd show <id>"
+        log "       bd comments <id>"
+        log ""
+        log "  2a. Approve the design:"
+        log "       bd set-state <id> review=approved --reason 'Design approved' --json"
+        log ""
+        log "  2b. Request changes:"
+        log "       bd set-state <id> review=changes-required --reason '<what to fix>' --json"
+        log ""
+        log "Re-run this script once you have reviewed all pending epics."
+        exit 0
+    fi
+
     # ── 1. Find next ready task ───────────────────────────────────────────────
     TASK_JSON=$(bd ready --json 2>/dev/null \
         | python3 -c "

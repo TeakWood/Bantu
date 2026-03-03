@@ -17,6 +17,10 @@ bd query "label=review:ready-for-review" --json
 If there are no results, output "No tasks ready for review." and stop.
 Otherwise, review each task in priority order (lowest number = highest priority).
 
+For each task, check its type:
+- **type = `epic`** → run the [Epic Design Review](#epic-design-review) flow below
+- **any other type** → run the standard Code Review flow below
+
 ---
 
 ## Review Loop (per task)
@@ -137,6 +141,86 @@ bd set-state <id> review=changes-required --reason "See review comment"
 ```bash
 bd set-state <id> review=approved --reason "LGTM"
 ```
+
+---
+
+---
+
+## Epic Design Review
+
+Use this flow when `bd show <id>` reveals type = `epic`. There is no code to run — you are evaluating the architectural design proposal posted in the task's comments.
+
+### Step 1 — Read the epic
+
+```bash
+bd show <id> --json
+bd comments <id> --json
+```
+
+Read the full description and all comments. The design proposal will be in a comment posted by Silpi.
+
+### Step 2 — Evaluate the design
+
+Assess each of the following. Mark as ✅ Pass, ❌ Fail (blocking), or 💡 Suggestion (non-blocking).
+
+**Completeness**
+- Does the design cover all requirements in the epic description?
+- Are all affected modules identified?
+- Are API/config changes described precisely?
+
+**Soundness**
+- Is the proposed architecture consistent with existing patterns (adapter pattern, Pydantic config, async bus, etc.)?
+- Will the design leave Bantu functional at every intermediate step?
+- Are there obvious failure modes or race conditions?
+
+**Edge cases**
+- Are error paths handled?
+- Is backwards compatibility addressed where needed?
+
+**Scope**
+- Is the design free of unnecessary complexity or over-engineering?
+- Can it be broken into self-contained feature tasks (Phase 2)?
+
+### Step 3 — Write the design review comment
+
+Format:
+
+```
+## Viharapala Design Review
+
+**Verdict:** DESIGN APPROVED | CHANGES REQUIRED
+
+### Findings
+
+1. ❌ **Blocking** — <specific gap or problem and what is needed>
+2. 💡 **Suggestion** — <optional improvement>
+...
+
+### Summary
+<2-3 sentence assessment of the design quality and readiness>
+```
+
+Post the comment:
+
+```bash
+bd comments add <id> "<review text>"
+```
+
+### Step 4 — Set the review state
+
+**If any blocking finding exists:**
+
+```bash
+bd set-state <id> review=changes-required --reason "See design review comment" --json
+```
+
+**If all blocking criteria pass:**
+
+```bash
+bd set-state <id> review=viharapala-approved --reason "Design LGTM — ready for author review" --json
+```
+
+> **Note:** For epics, never set `review=approved`. That final state is reserved for the author (Navakanth Gandavarapu) after their manual review. Your job is only to set `viharapala-approved`.
 
 ---
 
