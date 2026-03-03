@@ -399,6 +399,16 @@ def gateway(
 
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
 
+    admin_cfg = config.gateway.admin
+    if admin_cfg.enabled:
+        admin_url = f"http://{admin_cfg.host}:{admin_cfg.port}"
+        console.print(f"[green]✓[/green] Admin UI: {admin_url}")
+        if not admin_cfg.token:
+            console.print(
+                "[yellow]⚠ Admin UI running with NO authentication"
+                " — any local process can read/write config[/yellow]"
+            )
+
     async def run():
         try:
             await cron.start()
