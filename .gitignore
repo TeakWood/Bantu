@@ -20,3 +20,7 @@ poetry.lock
 .pytest_cache/
 botpy.log
 tests/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
