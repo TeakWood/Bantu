@@ -400,7 +400,11 @@ def gateway(
     console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
 
     admin_cfg = config.gateway.admin
+    admin_server = None
     if admin_cfg.enabled:
+        from nanobot.admin.server import AdminServer
+
+        admin_server = AdminServer(config)
         admin_url = f"http://{admin_cfg.host}:{admin_cfg.port}"
         console.print(f"[green]✓[/green] Admin UI: {admin_url}")
         if not admin_cfg.token:
@@ -413,6 +417,8 @@ def gateway(
         try:
             await cron.start()
             await heartbeat.start()
+            if admin_server is not None:
+                await admin_server.start()
             await asyncio.gather(
                 agent.run(),
                 channels.start_all(),
@@ -425,6 +431,8 @@ def gateway(
             cron.stop()
             agent.stop()
             await channels.stop_all()
+            if admin_server is not None:
+                await admin_server.stop()
 
     asyncio.run(run())
 
