@@ -160,7 +160,8 @@ $REVIEW_COMMENTS
     log "Merging $BRANCH to main..."
     git checkout main
     git pull
-    git merge --no-ff "$BRANCH" -m "$TASK_ID: Merge $BRANCH"
+    git merge --squash "$BRANCH"
+    git commit -m "$TASK_ID: Merge $BRANCH"
     git push
     git branch -d "$BRANCH"
     log "Merged and pushed."

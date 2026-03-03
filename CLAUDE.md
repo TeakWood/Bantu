@@ -150,7 +150,7 @@ The script will exit with an error if `CLAUDECODE` is set (i.e. if accidentally 
 2. **Silpi** (fresh `claude -p`): implement, test, commit, submit for review
 3. **Viharapala** (fresh `claude -p`): review, comment, set verdict
 4. If `changes-required` → back to Silpi with review comments (new session)
-5. If `approved` → merge `--no-ff` to main, push, close task
+5. If `approved` → squash merge to main, push, close task
 6. Repeat for next task
 
 ### Rules
