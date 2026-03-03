@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from aiohttp import web
 
+from nanobot.admin import routes as _routes
 from nanobot.config.schema import Config
 
 # Static assets bundled with the package
@@ -31,8 +33,9 @@ class AdminServer:
       ``GET /``.
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, config_path: Path | None = None) -> None:
         self._config = config
+        self._config_path = config_path
         self._runner: web.AppRunner | None = None
 
     # ------------------------------------------------------------------
@@ -94,7 +97,36 @@ class AdminServer:
             return await handler(request)
 
         app = web.Application(middlewares=[cors_middleware, auth_middleware])
+
+        # Per-app lock and config path for route handlers (typed keys avoid warnings).
+        app[_routes.APP_KEY_CONFIG_LOCK] = asyncio.Lock()
+        app[_routes.APP_KEY_CONFIG_PATH] = self._config_path
+
+        # Static UI
         app.router.add_get("/", _handle_root)
+
+        # --- Config ---
+        app.router.add_get("/api/config", _routes.handle_get_config)
+
+        # --- Providers ---
+        app.router.add_get("/api/providers", _routes.handle_get_providers)
+        app.router.add_put("/api/providers/{name}", _routes.handle_put_provider)
+
+        # --- Channels ---
+        app.router.add_get("/api/channels", _routes.handle_get_channels)
+        app.router.add_get("/api/channels/{name}", _routes.handle_get_channel)
+        app.router.add_put("/api/channels/{name}", _routes.handle_put_channel)
+
+        # --- MCP servers ---
+        app.router.add_get("/api/mcp", _routes.handle_get_mcp)
+        app.router.add_post("/api/mcp/{name}", _routes.handle_post_mcp)
+        app.router.add_put("/api/mcp/{name}", _routes.handle_put_mcp)
+        app.router.add_delete("/api/mcp/{name}", _routes.handle_delete_mcp)
+
+        # --- Agent defaults ---
+        app.router.add_get("/api/agent", _routes.handle_get_agent)
+        app.router.add_put("/api/agent", _routes.handle_put_agent)
+
         return app
 
     # ------------------------------------------------------------------
