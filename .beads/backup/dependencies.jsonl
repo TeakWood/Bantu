@@ -1,6 +1,8 @@
 {"created_at":"2026-03-03T17:56:12Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-109","type":"blocks"}
 {"created_at":"2026-03-03T20:18:15Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-fti","issue_id":"Bantu-3j8","type":"blocks"}
 {"created_at":"2026-03-03T20:18:15Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-hjx","issue_id":"Bantu-4kv","type":"blocks"}
+{"created_at":"2026-03-03T22:39:43Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-4kv","issue_id":"Bantu-4kv.1","type":"parent-child"}
+{"created_at":"2026-03-03T22:42:32Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-4kv","issue_id":"Bantu-4kv.2","type":"parent-child"}
 {"created_at":"2026-03-03T20:18:15Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-4kv","issue_id":"Bantu-fti","type":"blocks"}
 {"created_at":"2026-03-03T20:17:25Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-hjx","type":"discovered-from"}
 {"created_at":"2026-03-03T20:38:53Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-hjx","issue_id":"Bantu-hjx.1","type":"parent-child"}
