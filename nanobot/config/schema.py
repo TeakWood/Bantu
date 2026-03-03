@@ -259,12 +259,22 @@ class HeartbeatConfig(Base):
     interval_s: int = 30 * 60  # 30 minutes
 
 
+class AdminConfig(Base):
+    """Admin UI configuration."""
+
+    enabled: bool = False
+    token: str = ""  # Bearer token; empty = no auth required
+    host: str = "127.0.0.1"  # Bind to localhost by default for security
+    port: int = 18791  # Separate port from gateway messaging port
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
     host: str = "0.0.0.0"
     port: int = 18790
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    admin: AdminConfig = Field(default_factory=AdminConfig)
 
 
 class WebSearchConfig(Base):
