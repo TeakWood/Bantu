@@ -94,12 +94,44 @@ bd close bd-42 --reason "Completed" --json
 
 ### Workflow for AI Agents
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
+**One task at a time. One fresh Claude session per task.**
+
+Each task runs in its own isolated `claude` invocation seeded only with the task context from `bd show`. This prevents conversation history from one task polluting the next. The `agents/silpi/run.sh` script enforces this automatically — use it rather than managing the loop by hand.
+
+**Session rules:**
+- Every implementation or fix round starts a new `claude -p` invocation
+- The session receives: AGENTS.md (system prompt) + `bd show <id>` output (task context) + review comments if addressing changes
+- The session exits after submitting for review — polling happens in the shell, not inside Claude
+- A new session is opened only if changes are required
+
+**Lifecycle (managed by `agents/silpi/run.sh`):**
+
+1. Find next ready task: `bd ready --json`
+2. Claim it: `bd update <id> --claim --json`
+3. Create feature branch from main: `git checkout -b feature/<title>`
+4. **Fresh Claude session** — implement, test (`pytest`), commit (`<id>: <description>`), submit for review
+5. Shell polls for Viharapala's verdict every 60s: `bd state <id> review`
+6. If `changes-required` → **fresh Claude session** seeded with task context + review comments → commit → resubmit → back to step 5
+7. If `approved` → merge `--no-ff` to main, push, delete branch
+8. Close: `bd close <id> --reason "Approved and merged to main" --json`
+9. Loop back to step 1
+
+**Commit format** (enforced inside every Claude session):
+```
+<id>: <Brief description of changes>
+```
+
+### Code Review States
+
+Review state is a separate dimension from task status. It tracks the review lifecycle:
+
+| Label | Set by | Meaning |
+|---|---|---|
+| `review:ready-for-review` | Implementer | Work is done, requesting review |
+| `review:changes-required` | Viharapala | Blocking issues found — must fix and resubmit |
+| `review:approved` | Viharapala | All checks pass — safe to close |
+
+**Rule: A task MUST NOT be closed unless its review state is `approved`.**
 
 ### Auto-Sync
 
