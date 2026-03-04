@@ -198,8 +198,15 @@ def onboard():
 
 
 
-def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config."""
+def _make_provider(config: Config, *, raise_on_missing: bool = True):
+    """Create the appropriate LLM provider from config.
+
+    Args:
+        config: Loaded configuration.
+        raise_on_missing: When True (default), exit with an error if no API key
+            is configured.  When False, return None so callers can handle the
+            missing-provider case gracefully (e.g. the gateway command).
+    """
     from nanobot.providers.custom_provider import CustomProvider
     from nanobot.providers.litellm_provider import LiteLLMProvider
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
@@ -223,9 +230,11 @@ def _make_provider(config: Config):
     from nanobot.providers.registry import find_by_name
     spec = find_by_name(provider_name)
     if not model.startswith("bedrock/") and not (p and p.api_key) and not (spec and spec.is_oauth):
-        console.print("[red]Error: No API key configured.[/red]")
-        console.print("Set one in ~/.bantu/config.json under providers section")
-        raise typer.Exit(1)
+        if raise_on_missing:
+            console.print("[red]Error: No API key configured.[/red]")
+            console.print("Set one in ~/.bantu/config.json under providers section")
+            raise typer.Exit(1)
+        return None
 
     return LiteLLMProvider(
         api_key=p.api_key if p else None,
@@ -265,7 +274,18 @@ def gateway(
     config = load_config()
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
-    provider = _make_provider(config)
+    provider = _make_provider(config, raise_on_missing=False)
+    if provider is None:
+        from nanobot.providers.null_provider import NullProvider
+        provider = NullProvider()
+        console.print(
+            "[yellow]⚠ No API key configured.[/yellow] "
+            "The gateway will start, but the agent cannot process requests until "
+            "an API key is added to [cyan]~/.bantu/config.json[/cyan]."
+        )
+        console.print(
+            "  Run [cyan]nanobot onboard[/cyan] to set up your configuration."
+        )
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)

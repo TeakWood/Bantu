@@ -38,8 +38,17 @@ def load_config(config_path: Path | None = None) -> Config:
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
             print("Using default configuration.")
+            return Config()  # return in-memory default; do NOT overwrite corrupt file
 
-    return Config()
+    # Only reach here when the file does not exist at all
+    config = Config()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config.model_dump(by_alias=True), f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        print(f"Warning: Failed to create config at {path}: {e}")
+    return config
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
