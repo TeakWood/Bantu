@@ -13,6 +13,10 @@
 {"created_at":"2026-03-03T20:17:25Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-hjx","type":"discovered-from"}
 {"created_at":"2026-03-03T20:38:53Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-hjx","issue_id":"Bantu-hjx.1","type":"parent-child"}
 {"created_at":"2026-03-03T20:41:41Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-hjx","issue_id":"Bantu-hjx.2","type":"parent-child"}
+{"created_at":"2026-03-04T22:03:55Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.1","type":"parent-child"}
+{"created_at":"2026-03-04T22:05:45Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.2","type":"parent-child"}
+{"created_at":"2026-03-04T22:08:23Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.3","type":"parent-child"}
+{"created_at":"2026-03-04T22:10:36Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.4","type":"parent-child"}
 {"created_at":"2026-03-03T20:25:48Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.1","type":"parent-child"}
 {"created_at":"2026-03-03T20:29:01Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.2","type":"parent-child"}
 {"created_at":"2026-03-03T20:32:18Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.3","type":"parent-child"}
