@@ -181,7 +181,7 @@ cp -f   mv -f   rm -f   rm -rf   cp -rf
 Before ending a session: close/update issues, run quality gates if code changed, then:
 
 ```bash
-git pull --rebase && bd sync && git push
+git pull --rebase && git push
 ```
 
 Work is not complete until `git push` succeeds.
