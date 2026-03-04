@@ -5,46 +5,1101 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bantu Admin</title>
   <style>
+    /* ── Design tokens ─────────────────────────────────────────────────────── */
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d2e;
+      --surface2:    #22263a;
+      --border:      #2d3148;
+      --text:        #e2e8f0;
+      --muted:       #94a3b8;
+      --accent:      #60a5fa;
+      --accent-dim:  #1e3a5f;
+      --ok:          #34d399;
+      --ok-dim:      #064e3b;
+      --err:         #f87171;
+      --err-dim:     #450a0a;
+      --input-bg:    #0d1117;
+      --radius:      8px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100%;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Overlay (modal backdrop) ───────────────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 200;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
+      padding: 20px;
     }
-    .card {
-      background: #1a1d2e;
-      border: 1px solid #2d3148;
+    .overlay.hidden { display: none; }
+
+    /* ── Dialog card ───────────────────────────────────────────────────────── */
+    .dialog {
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 48px 56px;
-      max-width: 480px;
+      padding: 28px;
+      width: 100%;
+      max-width: 540px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .dialog-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; }
+
+    /* ── Token prompt ───────────────────────────────────────────────────────── */
+    #token-overlay { z-index: 300; }
+    .token-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 36px 32px;
+      max-width: 420px;
       width: 100%;
       text-align: center;
     }
-    .logo { font-size: 2.5rem; margin-bottom: 16px; }
-    h1 { font-size: 1.5rem; font-weight: 600; color: #f1f5f9; margin-bottom: 8px; }
-    p  { font-size: 0.95rem; color: #94a3b8; line-height: 1.6; }
+    .token-logo { font-size: 2.2rem; margin-bottom: 14px; }
+    .token-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 8px; }
+    .token-desc { color: var(--muted); font-size: 0.875rem; margin-bottom: 22px; line-height: 1.6; }
+    .token-row { display: flex; gap: 10px; }
+    #token-msg { min-height: 1.4em; font-size: 0.8rem; color: var(--err); margin-top: 10px; }
+
+    /* ── App shell ──────────────────────────────────────────────────────────── */
+    .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+    /* ── Navbar ─────────────────────────────────────────────────────────────── */
+    .navbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      height: 54px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand { font-size: 1rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+    .nav-tabs { display: flex; gap: 2px; flex: 1; overflow-x: auto; }
+    .nav-tab {
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      white-space: nowrap;
+      border: none;
+      background: none;
+      font-family: inherit;
+      transition: color 0.12s, background 0.12s;
+    }
+    .nav-tab:hover { color: var(--text); background: var(--surface2); }
+    .nav-tab.active { color: var(--accent); background: var(--accent-dim); }
+
+    /* ── Content ────────────────────────────────────────────────────────────── */
+    .content { flex: 1; padding: 24px; max-width: 1080px; width: 100%; margin: 0 auto; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .section-hdr {
+      display: flex; align-items: flex-start;
+      justify-content: space-between; margin-bottom: 18px; gap: 12px;
+    }
+    .section-title { font-size: 1.15rem; font-weight: 600; }
+    .section-sub { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+
+    /* ── Card ───────────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-pad { padding: 24px; }
+
+    /* ── Table ──────────────────────────────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+    td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(255,255,255,0.018); }
+    .placeholder-row td {
+      text-align: center;
+      color: var(--muted);
+      padding: 36px;
+      font-size: 0.875rem;
+    }
+
+    /* ── Form inputs ────────────────────────────────────────────────────────── */
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="email"],
+    select, textarea {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 6px 10px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      outline: none;
+      width: 100%;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 72px; font-size: 0.8rem; font-family: monospace; }
+    select option { background: var(--surface); }
+
+    /* ── Buttons ────────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      font-family: inherit;
+      transition: opacity 0.12s, background 0.12s;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+    .btn-primary { background: var(--accent); color: #05101f; border-color: var(--accent); }
+    .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+    .btn-secondary { background: var(--surface2); color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .btn-danger { background: var(--err-dim); color: var(--err); border-color: #7f1d1d; }
+    .btn-danger:hover:not(:disabled) { opacity: 0.8; }
+    .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+
+    /* ── Badges ─────────────────────────────────────────────────────────────── */
     .badge {
       display: inline-block;
-      margin-top: 24px;
-      padding: 4px 12px;
-      background: #1e3a5f;
-      color: #60a5fa;
+      padding: 2px 8px;
       border-radius: 999px;
-      font-size: 0.8rem;
-      font-weight: 500;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .badge-green { background: var(--ok-dim);    color: var(--ok);    }
+    .badge-gray  { background: var(--surface2);  color: var(--muted); }
+    .badge-blue  { background: var(--accent-dim); color: var(--accent); }
+
+    /* ── Toggle switch ──────────────────────────────────────────────────────── */
+    .toggle { position: relative; display: inline-block; width: 38px; height: 21px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: var(--border);
+      border-radius: 21px;
+      transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: "";
+      position: absolute;
+      width: 15px; height: 15px;
+      left: 3px; bottom: 3px;
+      background: var(--muted);
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent-dim); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(17px); background: var(--accent); }
+
+    /* ── Feedback ───────────────────────────────────────────────────────────── */
+    .feedback { font-size: 0.8rem; }
+    .feedback.ok  { color: var(--ok);  }
+    .feedback.err { color: var(--err); }
+
+    /* ── Channel items ──────────────────────────────────────────────────────── */
+    .ch-item { border-bottom: 1px solid var(--border); }
+    .ch-item:last-child { border-bottom: none; }
+    .ch-hdr {
+      display: flex; align-items: center; gap: 12px;
+      padding: 13px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .ch-hdr:hover { background: rgba(255,255,255,0.02); }
+    .ch-name { flex: 1; font-weight: 500; text-transform: capitalize; }
+    .ch-caret { color: var(--muted); font-size: 0.7rem; transition: transform 0.2s; }
+    .ch-item.open .ch-caret { transform: rotate(180deg); }
+    .ch-body {
+      display: none;
+      padding: 0 16px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .ch-item.open .ch-body { display: block; }
+
+    /* ── Field grid ─────────────────────────────────────────────────────────── */
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px 20px;
+      margin: 14px 0;
+    }
+    .field-group { display: flex; flex-direction: column; gap: 5px; }
+    .field-label { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+
+    /* ── Agent form ─────────────────────────────────────────────────────────── */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px 24px;
+    }
+    .agent-footer { margin-top: 20px; display: flex; align-items: center; gap: 12px; }
+
+    /* ── MCP dialog fields ──────────────────────────────────────────────────── */
+    .dlg-fields { display: flex; flex-direction: column; gap: 14px; }
+    .dlg-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+    /* ── Responsive ─────────────────────────────────────────────────────────── */
+    @media (max-width: 680px) {
+      .navbar { gap: 10px; padding: 0 12px; }
+      .nav-tab { padding: 6px 10px; font-size: 0.78rem; }
+      .content { padding: 14px; }
+      th, td { padding: 9px 10px; }
+      .agent-grid, .field-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="logo">&#x1F916;</div>
-    <h1>Bantu Admin</h1>
-    <p>The admin console is starting up. API endpoints are available for configuration management.</p>
-    <span class="badge">nanobot-ai</span>
+
+<!-- ── Token Prompt Overlay ─────────────────────────────────────────────────── -->
+<div id="token-overlay" class="overlay hidden">
+  <div class="token-card">
+    <div class="token-logo">🤖</div>
+    <div class="token-title">Bantu Admin</div>
+    <div class="token-desc">
+      Enter your admin bearer token to access this console.<br>
+      Leave blank and press <kbd>Enter</kbd> if no token is required.
+    </div>
+    <div class="token-row">
+      <input type="password" id="token-input" placeholder="Admin token…" style="flex:1" />
+      <button class="btn btn-primary" id="token-submit-btn">Enter</button>
+    </div>
+    <div id="token-msg"></div>
   </div>
+</div>
+
+<!-- ── MCP Server Dialog ─────────────────────────────────────────────────────── -->
+<div id="mcp-overlay" class="overlay hidden">
+  <div class="dialog">
+    <div class="dialog-title" id="mcp-dlg-title">Add MCP Server</div>
+    <div class="dlg-fields">
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-name">Server Name *</label>
+        <input type="text" id="mcp-f-name" placeholder="my-server" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-command">Command <span style="font-weight:400;color:var(--muted)">(stdio — leave blank for HTTP)</span></label>
+        <input type="text" id="mcp-f-command" placeholder="npx" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-args">Args <span style="font-weight:400;color:var(--muted)">(space-separated)</span></label>
+        <input type="text" id="mcp-f-args" placeholder="@modelcontextprotocol/server-everything" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-env">Environment Variables <span style="font-weight:400;color:var(--muted)">(KEY=VALUE, one per line)</span></label>
+        <textarea id="mcp-f-env" placeholder="NODE_ENV=production&#10;DEBUG=mcp:*"></textarea>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-url">URL <span style="font-weight:400;color:var(--muted)">(HTTP — leave blank for stdio)</span></label>
+        <input type="text" id="mcp-f-url" placeholder="http://localhost:3000/mcp" />
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-headers">HTTP Headers <span style="font-weight:400;color:var(--muted)">(KEY=VALUE, one per line)</span></label>
+        <textarea id="mcp-f-headers" placeholder="Authorization=Bearer token&#10;X-Custom=value"></textarea>
+      </div>
+      <div class="field-group">
+        <label class="field-label" for="mcp-f-timeout">Tool Timeout (seconds)</label>
+        <input type="number" id="mcp-f-timeout" value="30" min="1" />
+      </div>
+    </div>
+    <div class="dlg-footer">
+      <button class="btn btn-secondary" id="mcp-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="mcp-save-btn">Save</button>
+    </div>
+    <div style="text-align:center;margin-top:8px">
+      <span class="feedback" id="mcp-dlg-feedback"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── App ───────────────────────────────────────────────────────────────────── -->
+<div class="app">
+  <header class="navbar">
+    <span class="brand">🤖 Bantu Admin</span>
+    <nav class="nav-tabs" id="nav-tabs">
+      <button class="nav-tab active" data-section="providers">🔑 API Keys</button>
+      <button class="nav-tab"        data-section="channels">💬 Chat Integrations</button>
+      <button class="nav-tab"        data-section="mcp">🔌 MCP Servers</button>
+      <button class="nav-tab"        data-section="agent">⚙️ Agent Settings</button>
+    </nav>
+    <button class="btn btn-sm btn-secondary" id="reauth-btn" title="Re-enter admin token">🔐 Token</button>
+  </header>
+
+  <main class="content">
+
+    <!-- ── API Keys ─────────────────────────────────────────────────────────── -->
+    <section id="s-providers" class="section active">
+      <div class="section-hdr">
+        <div>
+          <div class="section-title">API Keys</div>
+          <div class="section-sub">Configure LLM provider credentials and custom API base URLs.</div>
+        </div>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>API Key</th>
+              <th>API Base URL</th>
+              <th style="width:110px">Action</th>
+            </tr>
+          </thead>
+          <tbody id="providers-tbody">
+            <tr class="placeholder-row"><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Chat Integrations ─────────────────────────────────────────────────── -->
+    <section id="s-channels" class="section">
+      <div class="section-hdr">
+        <div>
+          <div class="section-title">Chat Integrations</div>
+          <div class="section-sub">Enable and configure messaging platforms.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div id="channels-list">
+          <div class="placeholder-row" style="padding:36px;text-align:center;color:var(--muted)">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── MCP Servers ───────────────────────────────────────────────────────── -->
+    <section id="s-mcp" class="section">
+      <div class="section-hdr">
+        <div>
+          <div class="section-title">MCP Servers</div>
+          <div class="section-sub">Manage Model Context Protocol server connections.</div>
+        </div>
+        <button class="btn btn-primary" id="mcp-add-btn">+ Add Server</button>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Command / URL</th>
+              <th>Timeout</th>
+              <th style="width:90px">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="mcp-tbody">
+            <tr class="placeholder-row"><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Agent Settings ───────────────────────────────────────────────────── -->
+    <section id="s-agent" class="section">
+      <div class="section-hdr">
+        <div>
+          <div class="section-title">Agent Settings</div>
+          <div class="section-sub">Default model and runtime parameters for all agents.</div>
+        </div>
+      </div>
+      <div class="card card-pad">
+        <div class="agent-grid" id="agent-grid">
+          <div class="field-group">
+            <label class="field-label" for="ag-model">Model</label>
+            <input type="text" id="ag-model" placeholder="anthropic/claude-opus-4-5" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-provider">Provider</label>
+            <input type="text" id="ag-provider" placeholder="auto" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-temperature">Temperature</label>
+            <input type="number" id="ag-temperature" step="0.01" min="0" max="2" placeholder="0.1" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-maxTokens">Max Tokens</label>
+            <input type="number" id="ag-maxTokens" min="1" placeholder="8192" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-maxToolIterations">Max Tool Iterations</label>
+            <input type="number" id="ag-maxToolIterations" min="1" placeholder="40" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-memoryWindow">Memory Window</label>
+            <input type="number" id="ag-memoryWindow" min="1" placeholder="100" />
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-reasoningEffort">Reasoning Effort</label>
+            <select id="ag-reasoningEffort">
+              <option value="">— none —</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="ag-workspace">Workspace Path</label>
+            <input type="text" id="ag-workspace" placeholder="~/.nanobot/workspace" />
+          </div>
+        </div>
+        <div class="agent-footer">
+          <button class="btn btn-primary" id="agent-save-btn">Save Settings</button>
+          <span class="feedback" id="agent-feedback"></span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+'use strict';
+
+/* ── State ──────────────────────────────────────────────────────────────────── */
+const _mcpData = {};           // name → server object from GET /api/mcp
+const _chCfg   = {};           // name → config from GET /api/channels/:name
+const _chMask  = {};           // name → Set of masked field keys
+
+/* ── Token management ──────────────────────────────────────────────────────── */
+const TOKEN_KEY = 'bantu_admin_token';
+const getToken  = () => sessionStorage.getItem(TOKEN_KEY) || '';
+const saveToken = (t) => sessionStorage.setItem(TOKEN_KEY, t);
+
+function promptToken(reason) {
+  document.getElementById('token-msg').textContent = reason || '';
+  document.getElementById('token-input').value = '';
+  document.getElementById('token-overlay').classList.remove('hidden');
+  setTimeout(() => document.getElementById('token-input').focus(), 50);
+}
+function dismissTokenOverlay() {
+  document.getElementById('token-overlay').classList.add('hidden');
+}
+
+document.getElementById('token-submit-btn').addEventListener('click', () => {
+  const tok = document.getElementById('token-input').value.trim();
+  saveToken(tok);
+  dismissTokenOverlay();
+  reloadCurrentSection();
+});
+document.getElementById('token-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('token-submit-btn').click();
+});
+document.getElementById('reauth-btn').addEventListener('click', () => promptToken());
+
+/* ── Fetch wrapper: injects auth, handles 401 ──────────────────────────────── */
+async function api(path, opts = {}) {
+  const tok = getToken();
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401) {
+    promptToken('Access denied — please enter a valid admin token.');
+    throw Object.assign(new Error('401'), { is401: true });
+  }
+  return res;
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────────────── */
+const sectionLoaded = {};
+let currentSection = 'providers';
+
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(`s-${name}`).classList.add('active');
+  document.querySelector(`.nav-tab[data-section="${name}"]`).classList.add('active');
+  currentSection = name;
+  if (!sectionLoaded[name]) {
+    sectionLoaded[name] = true;
+    loadSection(name);
+  }
+}
+function reloadCurrentSection() {
+  sectionLoaded[currentSection] = false;
+  loadSection(currentSection);
+}
+function loadSection(n) {
+  if (n === 'providers') loadProviders();
+  else if (n === 'channels') loadChannels();
+  else if (n === 'mcp')      loadMCP();
+  else if (n === 'agent')    loadAgent();
+}
+
+document.getElementById('nav-tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.nav-tab');
+  if (tab) showSection(tab.dataset.section);
+});
+
+/* ── Feedback helper ────────────────────────────────────────────────────────── */
+function setFeedback(el, ok, msg) {
+  if (typeof el === 'string') el = document.getElementById(el);
+  el.textContent = (ok ? '✓ ' : '✗ ') + msg;
+  el.className   = 'feedback ' + (ok ? 'ok' : 'err');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.textContent = ''; el.className = 'feedback'; }, 4500);
+}
+
+/* ── HTML escape ────────────────────────────────────────────────────────────── */
+function h(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+/* ── camelCase → readable label ────────────────────────────────────────────── */
+function toLabel(k) {
+  return k
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, s => s.toUpperCase())
+    .replace(/_/g, ' ');
+}
+
+/* ── Parse KEY=VALUE textarea ───────────────────────────────────────────────── */
+function parseKV(text) {
+  const obj = {};
+  for (const line of text.split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq < 1) continue;
+    obj[line.slice(0, eq).trim()] = line.slice(eq + 1);
+  }
+  return obj;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   API Keys (Providers)
+══════════════════════════════════════════════════════════════════════════════ */
+
+async function loadProviders() {
+  const tbody = document.getElementById('providers-tbody');
+  tbody.innerHTML = '<tr class="placeholder-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const res  = await api('/api/providers');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const list = await res.json();
+    renderProviders(tbody, list);
+  } catch (e) {
+    if (!e.is401) tbody.innerHTML = `<tr class="placeholder-row"><td colspan="5" style="color:var(--err)">Error: ${h(e.message)}</td></tr>`;
+  }
+}
+
+function renderProviders(tbody, list) {
+  if (!list.length) {
+    tbody.innerHTML = '<tr class="placeholder-row"><td colspan="5">No providers available.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(p => `
+    <tr data-name="${h(p.name)}">
+      <td>
+        <strong>${h(p.label || p.name)}</strong>
+        ${p.is_oauth ? '<span class="badge badge-blue" style="margin-left:6px">OAuth</span>' : ''}
+        ${p.is_local ? '<span class="badge badge-gray" style="margin-left:6px">Local</span>' : ''}
+      </td>
+      <td>
+        ${p.has_key
+          ? '<span class="badge badge-green">Key set</span>'
+          : '<span class="badge badge-gray">No key</span>'}
+      </td>
+      <td style="min-width:180px">
+        ${p.is_oauth
+          ? '<span style="color:var(--muted);font-size:0.8rem">Uses OAuth — no key needed</span>'
+          : `<input type="password" data-role="api-key" placeholder="${p.has_key ? 'Enter new key to rotate…' : 'Paste API key…'}" style="font-family:monospace;font-size:0.8rem" />`}
+      </td>
+      <td style="min-width:160px">
+        <input type="text" data-role="api-base" value="${h(p.api_base || '')}" placeholder="Default" />
+      </td>
+      <td>
+        ${p.is_oauth ? '' : `
+          <button class="btn btn-sm btn-secondary" data-action="save-provider">Save</button>
+          <span class="feedback" data-role="provider-fb"></span>
+        `}
+      </td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('providers-tbody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-action="save-provider"]');
+  if (!btn) return;
+  const row  = btn.closest('tr');
+  const name = row.dataset.name;
+  const keyEl  = row.querySelector('[data-role="api-key"]');
+  const baseEl = row.querySelector('[data-role="api-base"]');
+  const fbEl   = row.querySelector('[data-role="provider-fb"]');
+
+  const body = {};
+  if (keyEl  && keyEl.value.trim())  body.api_key  = keyEl.value.trim();
+  if (baseEl) body.api_base = baseEl.value.trim() || null;
+
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/providers/${encodeURIComponent(name)}`, {
+      method: 'PUT', body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      setFeedback(fbEl, true, 'Saved');
+      if (keyEl) keyEl.value = '';
+      // Refresh table to update "has_key" badge after a short delay
+      setTimeout(() => { sectionLoaded['providers'] = false; loadProviders(); }, 1200);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setFeedback(fbEl, false, err.error || res.statusText);
+    }
+  } catch (e) {
+    if (!e.is401) setFeedback(fbEl, false, e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Chat Integrations (Channels)
+══════════════════════════════════════════════════════════════════════════════ */
+
+async function loadChannels() {
+  const list = document.getElementById('channels-list');
+  list.innerHTML = '<div style="padding:36px;text-align:center;color:var(--muted)">Loading…</div>';
+  try {
+    const res  = await api('/api/channels');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const chs = await res.json();
+    renderChannels(list, chs);
+  } catch (e) {
+    if (!e.is401) list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--err)">Error: ${h(e.message)}</div>`;
+  }
+}
+
+function renderChannels(container, channels) {
+  if (!channels.length) {
+    container.innerHTML = '<div style="padding:36px;text-align:center;color:var(--muted)">No channels found.</div>';
+    return;
+  }
+  container.innerHTML = channels.map(ch => `
+    <div class="ch-item" data-ch="${h(ch.name)}">
+      <div class="ch-hdr">
+        <label class="toggle" onclick="event.stopPropagation()">
+          <input type="checkbox" data-role="ch-toggle" ${ch.enabled ? 'checked' : ''} />
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="ch-name">${h(ch.name)}</span>
+        <span class="badge ${ch.enabled ? 'badge-green' : 'badge-gray'}" data-role="ch-badge">
+          ${ch.enabled ? 'Enabled' : 'Disabled'}
+        </span>
+        <span class="ch-caret">▼</span>
+      </div>
+      <div class="ch-body">
+        <div data-role="ch-config-area" style="padding:14px 0;color:var(--muted);font-size:0.85rem">
+          Expand to load configuration…
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Event delegation for channel interactions
+document.getElementById('channels-list').addEventListener('click', async (e) => {
+  // Toggle switch
+  const toggle = e.target.closest('[data-role="ch-toggle"]');
+  if (toggle) {
+    e.stopPropagation();
+    const item = toggle.closest('.ch-item');
+    const name = item.dataset.ch;
+    const on   = toggle.checked;
+    const badge = item.querySelector('[data-role="ch-badge"]');
+    badge.textContent = on ? 'Enabled' : 'Disabled';
+    badge.className   = `badge ${on ? 'badge-green' : 'badge-gray'}`;
+    try {
+      const res = await api(`/api/channels/${encodeURIComponent(name)}`, {
+        method: 'PUT', body: JSON.stringify({ enabled: on }),
+      });
+      if (!res.ok) {
+        // revert
+        toggle.checked  = !on;
+        badge.textContent = !on ? 'Enabled' : 'Disabled';
+        badge.className   = `badge ${!on ? 'badge-green' : 'badge-gray'}`;
+      }
+    } catch (_) { /* 401 already handled */ }
+    return;
+  }
+
+  // Save button inside channel body
+  const saveBtn = e.target.closest('[data-action="save-channel"]');
+  if (saveBtn) {
+    await saveChannel(saveBtn.closest('.ch-item').dataset.ch, saveBtn);
+    return;
+  }
+
+  // Header click → expand/collapse
+  const hdr = e.target.closest('.ch-hdr');
+  if (hdr) {
+    const item = hdr.closest('.ch-item');
+    item.classList.toggle('open');
+    if (item.classList.contains('open') && !item.dataset.loaded) {
+      item.dataset.loaded = '1';
+      await loadChannelConfig(item.dataset.ch);
+    }
+  }
+});
+
+async function loadChannelConfig(name) {
+  const item    = document.querySelector(`.ch-item[data-ch="${CSS.escape(name)}"]`);
+  const area    = item.querySelector('[data-role="ch-config-area"]');
+  area.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+  try {
+    const res = await api(`/api/channels/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const cfg = await res.json();
+    _chCfg[name]  = cfg;
+    _chMask[name] = new Set();
+    renderChannelConfig(area, name, cfg);
+  } catch (e) {
+    if (!e.is401) area.innerHTML = `<span style="color:var(--err)">Error: ${h(e.message)}</span>`;
+  }
+}
+
+function renderChannelConfig(area, name, cfg) {
+  const masked = _chMask[name];
+  const fields = Object.entries(cfg)
+    .filter(([k]) => k !== 'enabled')
+    .map(([k, v]) => {
+      let input;
+      const id = `ch-${name}-${k}`;
+
+      if (typeof v === 'boolean') {
+        input = `<input type="checkbox" id="${id}" ${v ? 'checked' : ''}
+                   style="width:auto;height:16px;margin-top:4px;cursor:pointer"
+                   data-vtype="bool" />`;
+      } else if (Array.isArray(v)) {
+        input = `<input type="text" id="${id}" value="${h(v.join(', '))}"
+                   placeholder="comma-separated" data-vtype="array" />`;
+      } else if (v === null) {
+        input = `<input type="text" id="${id}" value="" placeholder="(none)" data-vtype="nullable" />`;
+      } else if (typeof v === 'number') {
+        input = `<input type="number" id="${id}" value="${v}" data-vtype="number" />`;
+      } else if (typeof v === 'object') {
+        input = `<textarea id="${id}" data-vtype="json">${h(JSON.stringify(v, null, 2))}</textarea>`;
+      } else {
+        // string — check if masked
+        const isMasked = String(v) === '****';
+        if (isMasked) masked.add(k);
+        input = `<input type="${isMasked ? 'password' : 'text'}" id="${id}"
+                   value="${isMasked ? '' : h(String(v))}"
+                   placeholder="${isMasked ? '(unchanged — enter new value to rotate)' : ''}"
+                   data-vtype="${isMasked ? 'masked' : 'string'}" />`;
+      }
+      return `<div class="field-group">
+        <label class="field-label" for="${id}">${h(toLabel(k))}</label>${input}
+      </div>`;
+    }).join('');
+
+  area.innerHTML = `
+    <div class="field-grid">${fields}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+      <button class="btn btn-sm btn-primary" data-action="save-channel">Save</button>
+      <span class="feedback" id="ch-fb-${name}"></span>
+    </div>`;
+}
+
+async function saveChannel(name, btn) {
+  const cfg    = _chCfg[name] || {};
+  const masked = _chMask[name] || new Set();
+  const item   = document.querySelector(`.ch-item[data-ch="${CSS.escape(name)}"]`);
+  const fbEl   = document.getElementById(`ch-fb-${name}`);
+  const toggleEl = item.querySelector('[data-role="ch-toggle"]');
+
+  const payload = { enabled: toggleEl ? toggleEl.checked : cfg.enabled };
+
+  // Collect rendered fields
+  item.querySelectorAll('[id^="ch-' + name + '-"]').forEach(el => {
+    const k = el.id.slice(`ch-${name}-`.length);
+    if (!k) return;
+    const vt = el.dataset.vtype;
+    if (vt === 'bool')     { payload[k] = el.checked; }
+    else if (vt === 'array') { payload[k] = el.value.split(',').map(s => s.trim()).filter(Boolean); }
+    else if (vt === 'number') { payload[k] = el.value === '' ? null : Number(el.value); }
+    else if (vt === 'json')   { try { payload[k] = JSON.parse(el.value); } catch { payload[k] = el.value; } }
+    else if (vt === 'masked') { if (el.value.trim()) payload[k] = el.value.trim(); /* skip if blank */ }
+    else if (vt === 'nullable') { payload[k] = el.value.trim() || null; }
+    else { payload[k] = el.value; }
+  });
+
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/channels/${encodeURIComponent(name)}`, {
+      method: 'PUT', body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      setFeedback(fbEl, true, 'Saved');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setFeedback(fbEl, false, err.error || res.statusText);
+    }
+  } catch (e) {
+    if (!e.is401) setFeedback(fbEl, false, e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   MCP Servers
+══════════════════════════════════════════════════════════════════════════════ */
+
+let _mcpEditing = null; // null = new, string = server name being edited
+
+async function loadMCP() {
+  const tbody = document.getElementById('mcp-tbody');
+  tbody.innerHTML = '<tr class="placeholder-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const res     = await api('/api/mcp');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const servers = await res.json();
+    // Cache for edit dialog
+    servers.forEach(s => { _mcpData[s.name] = s; });
+    renderMCP(tbody, servers);
+  } catch (e) {
+    if (!e.is401) tbody.innerHTML = `<tr class="placeholder-row"><td colspan="5" style="color:var(--err)">Error: ${h(e.message)}</td></tr>`;
+  }
+}
+
+function renderMCP(tbody, servers) {
+  if (!servers.length) {
+    tbody.innerHTML = '<tr class="placeholder-row"><td colspan="5">No MCP servers configured. Click "+ Add Server" to add one.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = servers.map(s => {
+    const isHTTP = Boolean(s.url);
+    const detail = isHTTP ? (s.url || '') : (s.command || '');
+    return `
+    <tr data-name="${h(s.name)}">
+      <td><strong>${h(s.name)}</strong></td>
+      <td><span class="badge ${isHTTP ? 'badge-blue' : 'badge-gray'}">${isHTTP ? 'HTTP' : 'stdio'}</span></td>
+      <td style="font-family:monospace;font-size:0.8rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(detail)}</td>
+      <td>${h(s.tool_timeout)}s</td>
+      <td>
+        <button class="btn btn-sm btn-secondary" data-action="edit-mcp"   style="margin-right:4px">✏️</button>
+        <button class="btn btn-sm btn-danger"    data-action="delete-mcp">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// MCP table delegation
+document.getElementById('mcp-tbody').addEventListener('click', (e) => {
+  const btn  = e.target.closest('[data-action]');
+  if (!btn) return;
+  const name = btn.closest('tr').dataset.name;
+  if (btn.dataset.action === 'edit-mcp')   openMCPDialog(name);
+  if (btn.dataset.action === 'delete-mcp') deleteMCP(name);
+});
+
+document.getElementById('mcp-add-btn').addEventListener('click', () => openMCPDialog(null));
+
+function openMCPDialog(name) {
+  _mcpEditing = name;
+  document.getElementById('mcp-dlg-title').textContent = name ? 'Edit MCP Server' : 'Add MCP Server';
+  document.getElementById('mcp-dlg-feedback').textContent = '';
+  const s = name ? (_mcpData[name] || {}) : {};
+  document.getElementById('mcp-f-name').value    = s.name    || '';
+  document.getElementById('mcp-f-name').disabled = Boolean(name);
+  document.getElementById('mcp-f-command').value = s.command || '';
+  document.getElementById('mcp-f-args').value    = (s.args   || []).join(' ');
+  document.getElementById('mcp-f-env').value     = Object.entries(s.env     || {}).map(([k,v]) => `${k}=${v}`).join('\n');
+  document.getElementById('mcp-f-url').value     = s.url     || '';
+  document.getElementById('mcp-f-headers').value = Object.entries(s.headers || {}).map(([k,v]) => `${k}=${v}`).join('\n');
+  document.getElementById('mcp-f-timeout').value = s.tool_timeout != null ? s.tool_timeout : 30;
+  document.getElementById('mcp-overlay').classList.remove('hidden');
+}
+
+document.getElementById('mcp-cancel-btn').addEventListener('click', () => {
+  document.getElementById('mcp-overlay').classList.add('hidden');
+});
+
+document.getElementById('mcp-save-btn').addEventListener('click', async () => {
+  const name = document.getElementById('mcp-f-name').value.trim();
+  const fbEl = document.getElementById('mcp-dlg-feedback');
+
+  if (!name) {
+    fbEl.textContent = '✗ Server name is required.';
+    fbEl.className   = 'feedback err';
+    return;
+  }
+
+  const argsRaw = document.getElementById('mcp-f-args').value.trim();
+  const body = {
+    command:      document.getElementById('mcp-f-command').value.trim(),
+    args:         argsRaw ? argsRaw.split(/\s+/) : [],
+    env:          parseKV(document.getElementById('mcp-f-env').value),
+    url:          document.getElementById('mcp-f-url').value.trim(),
+    headers:      parseKV(document.getElementById('mcp-f-headers').value),
+    tool_timeout: Number(document.getElementById('mcp-f-timeout').value) || 30,
+  };
+
+  const saveBtn = document.getElementById('mcp-save-btn');
+  saveBtn.disabled = true;
+  fbEl.textContent = '';
+  try {
+    const method = _mcpEditing ? 'PUT' : 'POST';
+    const res = await api(`/api/mcp/${encodeURIComponent(name)}`, {
+      method, body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      document.getElementById('mcp-overlay').classList.add('hidden');
+      sectionLoaded['mcp'] = false;
+      loadMCP();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      fbEl.textContent = '✗ ' + (err.error || res.statusText);
+      fbEl.className   = 'feedback err';
+    }
+  } catch (e) {
+    if (!e.is401) { fbEl.textContent = '✗ ' + e.message; fbEl.className = 'feedback err'; }
+  } finally {
+    saveBtn.disabled = false;
+  }
+});
+
+async function deleteMCP(name) {
+  if (!confirm(`Delete MCP server "${name}"? This cannot be undone.`)) return;
+  try {
+    const res = await api(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (res.ok) {
+      delete _mcpData[name];
+      sectionLoaded['mcp'] = false;
+      loadMCP();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert('Delete failed: ' + (err.error || res.statusText));
+    }
+  } catch (e) {
+    if (!e.is401) alert('Error: ' + e.message);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Agent Settings
+══════════════════════════════════════════════════════════════════════════════ */
+
+async function loadAgent() {
+  try {
+    const res = await api('/api/agent');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const cfg = await res.json();
+    document.getElementById('ag-model').value              = cfg.model              || '';
+    document.getElementById('ag-provider').value           = cfg.provider           || '';
+    document.getElementById('ag-temperature').value        = cfg.temperature        ?? '';
+    document.getElementById('ag-maxTokens').value          = cfg.maxTokens          ?? '';
+    document.getElementById('ag-maxToolIterations').value  = cfg.maxToolIterations  ?? '';
+    document.getElementById('ag-memoryWindow').value       = cfg.memoryWindow       ?? '';
+    document.getElementById('ag-reasoningEffort').value    = cfg.reasoningEffort    || '';
+    document.getElementById('ag-workspace').value          = cfg.workspace          || '';
+  } catch (e) {
+    if (!e.is401) setFeedback('agent-feedback', false, 'Failed to load: ' + e.message);
+  }
+}
+
+document.getElementById('agent-save-btn').addEventListener('click', async () => {
+  const btn  = document.getElementById('agent-save-btn');
+  const fbEl = document.getElementById('agent-feedback');
+  btn.disabled = true;
+
+  const numOrUndef = (id) => {
+    const v = document.getElementById(id).value;
+    return v !== '' ? Number(v) : undefined;
+  };
+  const strOrUndef = (id) => {
+    const v = document.getElementById(id).value.trim();
+    return v || undefined;
+  };
+
+  const body = {};
+  const model    = strOrUndef('ag-model');              if (model    !== undefined) body.model    = model;
+  const provider = strOrUndef('ag-provider');           if (provider !== undefined) body.provider = provider;
+  const temp     = numOrUndef('ag-temperature');        if (temp     !== undefined) body.temperature        = temp;
+  const maxTok   = numOrUndef('ag-maxTokens');          if (maxTok   !== undefined) body.maxTokens          = maxTok;
+  const maxIter  = numOrUndef('ag-maxToolIterations');  if (maxIter  !== undefined) body.maxToolIterations  = maxIter;
+  const memWin   = numOrUndef('ag-memoryWindow');       if (memWin   !== undefined) body.memoryWindow       = memWin;
+  const ws       = strOrUndef('ag-workspace');          if (ws       !== undefined) body.workspace          = ws;
+  const effort   = document.getElementById('ag-reasoningEffort').value;
+  body.reasoningEffort = effort || null;
+
+  try {
+    const res = await api('/api/agent', { method: 'PUT', body: JSON.stringify(body) });
+    if (res.ok) {
+      setFeedback(fbEl, true, 'Saved');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setFeedback(fbEl, false, err.error || res.statusText);
+    }
+  } catch (e) {
+    if (!e.is401) setFeedback(fbEl, false, e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Init
+══════════════════════════════════════════════════════════════════════════════ */
+(function init() {
+  // Always render the UI. Token is a UX convenience — server enforces auth via 401.
+  // Show token prompt upfront if nothing is stored so the user can enter credentials
+  // before the first API call, avoiding a 401-then-re-prompt round-trip.
+  if (!getToken()) {
+    promptToken();
+  }
+  // Load the first section regardless; if auth is required, the api() wrapper
+  // will catch the 401 and call promptToken() automatically.
+  sectionLoaded['providers'] = true;
+  loadProviders();
+})();
+</script>
 </body>
 </html>
