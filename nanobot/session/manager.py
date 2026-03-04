@@ -79,7 +79,7 @@ class SessionManager:
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
-        self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
+        self.legacy_sessions_dir = Path.home() / ".bantu" / "sessions"
         self._cache: dict[str, Session] = {}
 
     def _get_session_path(self, key: str) -> Path:
@@ -88,7 +88,7 @@ class SessionManager:
         return self.sessions_dir / f"{safe_key}.jsonl"
 
     def _get_legacy_session_path(self, key: str) -> Path:
-        """Legacy global session path (~/.nanobot/sessions/)."""
+        """Legacy global session path (~/.bantu/sessions/)."""
         safe_key = safe_filename(key.replace(":", "_"))
         return self.legacy_sessions_dir / f"{safe_key}.jsonl"
 

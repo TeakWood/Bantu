@@ -118,7 +118,7 @@ pip install nanobot-ai
 ## 🚀 Quick Start
 
 > [!TIP]
-> Set your API key in `~/.nanobot/config.json`.
+> Set your API key in `~/.bantu/config.json`.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 
 **1. Initialize**
@@ -127,7 +127,7 @@ pip install nanobot-ai
 nanobot onboard
 ```
 
-**2. Configure** (`~/.nanobot/config.json`)
+**2. Configure** (`~/.bantu/config.json`)
 
 Add or merge these **two parts** into your config (other options have defaults).
 
@@ -225,7 +225,7 @@ Simply send this message to nanobot (replace `xxx@xxx` with your real email):
 Read https://raw.githubusercontent.com/HKUDS/MoChat/refs/heads/main/skills/nanobot/skill.md and register on MoChat. My Email account is xxx@xxx Bind me as your owner and DM me on MoChat.
 ```
 
-nanobot will automatically register, configure `~/.nanobot/config.json`, and connect to Mochat.
+nanobot will automatically register, configure `~/.bantu/config.json`, and connect to Mochat.
 
 **2. Restart gateway**
 
@@ -240,7 +240,7 @@ That's it — nanobot handles the rest!
 <details>
 <summary>Manual configuration (advanced)</summary>
 
-If you prefer to configure manually, add the following to `~/.nanobot/config.json`:
+If you prefer to configure manually, add the following to `~/.bantu/config.json`:
 
 > Keep `claw_token` private. It should only be sent in `X-Claw-Token` header to your Mochat API endpoint.
 
@@ -649,7 +649,7 @@ Simply send the command above to your nanobot (via CLI or any chat channel), and
 
 ## ⚙️ Configuration
 
-Config file: `~/.nanobot/config.json`
+Config file: `~/.bantu/config.json`
 
 ### Providers
 
@@ -689,7 +689,7 @@ Codex uses OAuth instead of API keys. Requires a ChatGPT Plus or Pro account.
 nanobot provider login openai-codex
 ```
 
-**2. Set model** (merge into `~/.nanobot/config.json`):
+**2. Set model** (merge into `~/.bantu/config.json`):
 ```json
 {
   "agents": {
@@ -744,7 +744,7 @@ Run your own model with vLLM or any OpenAI-compatible server, then add to config
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 ```
 
-**2. Add to config** (partial — merge into `~/.nanobot/config.json`):
+**2. Add to config** (partial — merge into `~/.bantu/config.json`):
 
 *Provider (key can be any non-empty string for local):*
 ```json
@@ -904,9 +904,9 @@ Interactive mode exits: `exit`, `quit`, `/exit`, `/quit`, `:q`, or `Ctrl+D`.
 <details>
 <summary><b>Heartbeat (Periodic Tasks)</b></summary>
 
-The gateway wakes up every 30 minutes and checks `HEARTBEAT.md` in your workspace (`~/.nanobot/workspace/HEARTBEAT.md`). If the file has tasks, the agent executes them and delivers results to your most recently active chat channel.
+The gateway wakes up every 30 minutes and checks `HEARTBEAT.md` in your workspace (`~/.bantu/workspace/HEARTBEAT.md`). If the file has tasks, the agent executes them and delivers results to your most recently active chat channel.
 
-**Setup:** edit `~/.nanobot/workspace/HEARTBEAT.md` (created automatically by `nanobot onboard`):
+**Setup:** edit `~/.bantu/workspace/HEARTBEAT.md` (created automatically by `nanobot onboard`):
 
 ```markdown
 ## Periodic Tasks
@@ -924,13 +924,13 @@ The agent can also manage this file itself — ask it to "add a periodic task" a
 ## 🐳 Docker
 
 > [!TIP]
-> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
+> The `-v ~/.bantu:/root/.bantu` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
 
 ### Docker Compose
 
 ```bash
 docker compose run --rm nanobot-cli onboard   # first-time setup
-vim ~/.nanobot/config.json                     # add API keys
+vim ~/.bantu/config.json                     # add API keys
 docker compose up -d nanobot-gateway           # start gateway
 ```
 
@@ -947,17 +947,17 @@ docker compose down                                      # stop
 docker build -t nanobot .
 
 # Initialize config (first time only)
-docker run -v ~/.nanobot:/root/.nanobot --rm nanobot onboard
+docker run -v ~/.bantu:/root/.bantu --rm nanobot onboard
 
 # Edit config on host to add API keys
-vim ~/.nanobot/config.json
+vim ~/.bantu/config.json
 
 # Run gateway (connects to enabled channels, e.g. Telegram/Discord/Mochat)
-docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 nanobot gateway
+docker run -v ~/.bantu:/root/.bantu -p 18790:18790 nanobot gateway
 
 # Or run a single command
-docker run -v ~/.nanobot:/root/.nanobot --rm nanobot agent -m "Hello!"
-docker run -v ~/.nanobot:/root/.nanobot --rm nanobot status
+docker run -v ~/.bantu:/root/.bantu --rm nanobot agent -m "Hello!"
+docker run -v ~/.bantu:/root/.bantu --rm nanobot status
 ```
 
 ## 🐧 Linux Service
@@ -1068,7 +1068,7 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 
 <p align="center">
   <em> Thanks for visiting ✨ nanobot!</em><br><br>
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.nanobot&style=for-the-badge&color=00d4ff" alt="Views">
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.bantu&style=for-the-badge&color=00d4ff" alt="Views">
 </p>
 
 

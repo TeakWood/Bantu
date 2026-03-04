@@ -87,7 +87,7 @@ def _init_prompt_session() -> None:
     except Exception:
         pass
 
-    history_file = Path.home() / ".nanobot" / "history" / "cli_history"
+    history_file = Path.home() / ".bantu" / "history" / "cli_history"
     history_file.parent.mkdir(parents=True, exist_ok=True)
 
     _PROMPT_SESSION = PromptSession(
@@ -189,7 +189,7 @@ def onboard():
 
     console.print(f"\n{__logo__} nanobot is ready!")
     console.print("\nNext steps:")
-    console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
+    console.print("  1. Add your API key to [cyan]~/.bantu/config.json[/cyan]")
     console.print("     Get one at: https://openrouter.ai/keys")
     console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]")
@@ -224,7 +224,7 @@ def _make_provider(config: Config):
     spec = find_by_name(provider_name)
     if not model.startswith("bedrock/") and not (p and p.api_key) and not (spec and spec.is_oauth):
         console.print("[red]Error: No API key configured.[/red]")
-        console.print("Set one in ~/.nanobot/config.json under providers section")
+        console.print("Set one in ~/.bantu/config.json under providers section")
         raise typer.Exit(1)
 
     return LiteLLMProvider(
@@ -723,7 +723,7 @@ def _get_bridge_dir() -> Path:
     import subprocess
 
     # User's bridge location
-    user_bridge = Path.home() / ".nanobot" / "bridge"
+    user_bridge = Path.home() / ".bantu" / "bridge"
 
     # Check if already built
     if (user_bridge / "dist" / "index.js").exists():

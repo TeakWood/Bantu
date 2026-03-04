@@ -12,13 +12,13 @@ def ensure_dir(path: Path) -> Path:
 
 
 def get_data_path() -> Path:
-    """~/.nanobot data directory."""
-    return ensure_dir(Path.home() / ".nanobot")
+    """~/.bantu data directory."""
+    return ensure_dir(Path.home() / ".bantu")
 
 
 def get_workspace_path(workspace: str | None = None) -> Path:
-    """Resolve and ensure workspace path. Defaults to ~/.nanobot/workspace."""
-    path = Path(workspace).expanduser() if workspace else Path.home() / ".nanobot" / "workspace"
+    """Resolve and ensure workspace path. Defaults to ~/.bantu/workspace."""
+    path = Path(workspace).expanduser() if workspace else Path.home() / ".bantu" / "workspace"
     return ensure_dir(path)
 
 

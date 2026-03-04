@@ -31,7 +31,7 @@ RUN npm install && npm run build
 WORKDIR /app
 
 # Create config directory
-RUN mkdir -p /root/.nanobot
+RUN mkdir -p /root/.bantu
 
 # Gateway default port
 EXPOSE 18790

@@ -1486,6 +1486,7 @@ name = "nanobot-ai"
 version = "0.1.4.post3"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "croniter" },
     { name = "dingtalk-stream" },
     { name = "httpx" },
@@ -1527,6 +1528,7 @@ matrix = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0,<4.0.0" },
     { name = "croniter", specifier = ">=6.0.0,<7.0.0" },
     { name = "dingtalk-stream", specifier = ">=0.24.0,<1.0.0" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
