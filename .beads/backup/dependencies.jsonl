@@ -36,6 +36,7 @@
 {"created_at":"2026-03-09T18:23:28Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-dez","issue_id":"Bantu-irt","type":"blocks"}
 {"created_at":"2026-03-09T18:23:28Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-kx9","issue_id":"Bantu-irt","type":"blocks"}
 {"created_at":"2026-03-09T18:15:52Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-aj6","issue_id":"Bantu-kx9","type":"discovered-from"}
+{"created_at":"2026-03-09T19:20:25Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-kx9","issue_id":"Bantu-kx9.1","type":"parent-child"}
 {"created_at":"2026-03-04T22:03:55Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.1","type":"parent-child"}
 {"created_at":"2026-03-04T22:05:45Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.2","type":"parent-child"}
 {"created_at":"2026-03-04T22:08:23Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-msf","issue_id":"Bantu-msf.3","type":"parent-child"}

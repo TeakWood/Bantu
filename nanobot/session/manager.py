@@ -25,6 +25,7 @@ class Session:
     """
 
     key: str  # channel:chat_id
+    agent_id: str = "default"  # Owning agent; "default" = personal assistant
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
@@ -80,42 +81,55 @@ class SessionManager:
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = Path.home() / ".bantu" / "sessions"
-        self._cache: dict[str, Session] = {}
+        self._cache: dict[tuple[str, str], Session] = {}
 
-    def _get_session_path(self, key: str) -> Path:
-        """Get the file path for a session."""
+    def _get_session_path(self, key: str, agent_id: str = "default") -> Path:
+        """Get the file path for a session, scoped to the owning agent.
+
+        For the ``"default"`` agent the filename is ``{safe_key}.jsonl``,
+        preserving backward compatibility with existing session files.
+        For all other agents the filename is ``{safe_agent_id}__{safe_key}.jsonl``.
+        """
         safe_key = safe_filename(key.replace(":", "_"))
-        return self.sessions_dir / f"{safe_key}.jsonl"
+        if agent_id == "default":
+            return self.sessions_dir / f"{safe_key}.jsonl"
+        safe_agent = safe_filename(agent_id)
+        return self.sessions_dir / f"{safe_agent}__{safe_key}.jsonl"
 
     def _get_legacy_session_path(self, key: str) -> Path:
         """Legacy global session path (~/.bantu/sessions/)."""
         safe_key = safe_filename(key.replace(":", "_"))
         return self.legacy_sessions_dir / f"{safe_key}.jsonl"
 
-    def get_or_create(self, key: str) -> Session:
+    def get_or_create(self, key: str, agent_id: str = "default") -> Session:
         """
         Get an existing session or create a new one.
 
         Args:
             key: Session key (usually channel:chat_id).
+            agent_id: Owning agent identifier.  Defaults to ``"default"``,
+                which represents the personal assistant.  Sessions for the
+                same key but different agents are stored and cached separately.
 
         Returns:
             The session.
         """
-        if key in self._cache:
-            return self._cache[key]
+        cache_key = (agent_id, key)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        session = self._load(key)
+        session = self._load(key, agent_id)
         if session is None:
-            session = Session(key=key)
+            session = Session(key=key, agent_id=agent_id)
 
-        self._cache[key] = session
+        self._cache[cache_key] = session
         return session
 
-    def _load(self, key: str) -> Session | None:
+    def _load(self, key: str, agent_id: str = "default") -> Session | None:
         """Load a session from disk."""
-        path = self._get_session_path(key)
-        if not path.exists():
+        path = self._get_session_path(key, agent_id)
+        # Legacy migration only applies to the default agent's sessions.
+        if agent_id == "default" and not path.exists():
             legacy_path = self._get_legacy_session_path(key)
             if legacy_path.exists():
                 try:
@@ -132,6 +146,7 @@ class SessionManager:
             metadata = {}
             created_at = None
             last_consolidated = 0
+            loaded_agent_id = "default"
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -145,11 +160,14 @@ class SessionManager:
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                        # agent_id written by new code; old files omit it → "default"
+                        loaded_agent_id = data.get("agent_id", "default")
                     else:
                         messages.append(data)
 
             return Session(
                 key=key,
+                agent_id=loaded_agent_id,
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
@@ -161,12 +179,13 @@ class SessionManager:
 
     def save(self, session: Session) -> None:
         """Save a session to disk."""
-        path = self._get_session_path(session.key)
+        path = self._get_session_path(session.key, session.agent_id)
 
         with open(path, "w", encoding="utf-8") as f:
             metadata_line = {
                 "_type": "metadata",
                 "key": session.key,
+                "agent_id": session.agent_id,
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
@@ -176,11 +195,11 @@ class SessionManager:
             for msg in session.messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
-        self._cache[session.key] = session
+        self._cache[(session.agent_id, session.key)] = session
 
-    def invalidate(self, key: str) -> None:
+    def invalidate(self, key: str, agent_id: str = "default") -> None:
         """Remove a session from the in-memory cache."""
-        self._cache.pop(key, None)
+        self._cache.pop((agent_id, key), None)
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """

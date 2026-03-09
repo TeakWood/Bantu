@@ -340,7 +340,7 @@ class AgentLoop:
                                 else ("cli", msg.chat_id))
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
-            session = self.sessions.get_or_create(key)
+            session = self.sessions.get_or_create(key, agent_id=msg.agent_id or "default")
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=self.memory_window)
             messages = self.context.build_messages(
@@ -357,7 +357,7 @@ class AgentLoop:
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         key = session_key or msg.session_key
-        session = self.sessions.get_or_create(key)
+        session = self.sessions.get_or_create(key, agent_id=msg.agent_id or "default")
 
         # Slash commands
         cmd = msg.content.strip().lower()
@@ -386,7 +386,7 @@ class AgentLoop:
 
             session.clear()
             self.sessions.save(session)
-            self.sessions.invalidate(session.key)
+            self.sessions.invalidate(session.key, agent_id=session.agent_id)
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="New session started.")
         if cmd == "/help":
