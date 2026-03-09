@@ -28,6 +28,8 @@
 {"created_at":"2026-03-03T23:06:52Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-fti","issue_id":"Bantu-fti.1","type":"parent-child"}
 {"created_at":"2026-03-03T23:10:02Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-fti","issue_id":"Bantu-fti.2","type":"parent-child"}
 {"created_at":"2026-03-09T16:17:08Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q","issue_id":"Bantu-g1q.1","type":"parent-child"}
+{"created_at":"2026-03-10T02:05:04Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q.1","issue_id":"Bantu-g1q.1.1","type":"parent-child"}
+{"created_at":"2026-03-10T02:07:20Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q.1","issue_id":"Bantu-g1q.1.2","type":"parent-child"}
 {"created_at":"2026-03-09T17:12:20Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q","issue_id":"Bantu-g1q.2","type":"parent-child"}
 {"created_at":"2026-03-09T17:16:09Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q","issue_id":"Bantu-g1q.3","type":"parent-child"}
 {"created_at":"2026-03-09T17:40:32Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-g1q","issue_id":"Bantu-g1q.6","type":"parent-child"}
@@ -44,6 +46,7 @@
 {"created_at":"2026-03-09T18:23:28Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-dez","issue_id":"Bantu-irt","type":"blocks"}
 {"created_at":"2026-03-09T18:23:28Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-kx9","issue_id":"Bantu-irt","type":"blocks"}
 {"created_at":"2026-03-10T01:53:23Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-irt","issue_id":"Bantu-irt.1","type":"parent-child"}
+{"created_at":"2026-03-10T01:56:12Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-irt","issue_id":"Bantu-irt.2","type":"parent-child"}
 {"created_at":"2026-03-09T18:15:52Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-aj6","issue_id":"Bantu-kx9","type":"discovered-from"}
 {"created_at":"2026-03-09T19:20:25Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-kx9","issue_id":"Bantu-kx9.1","type":"parent-child"}
 {"created_at":"2026-03-09T19:22:50Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-kx9","issue_id":"Bantu-kx9.2","type":"parent-child"}
@@ -55,3 +58,4 @@
 {"created_at":"2026-03-03T20:29:01Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.2","type":"parent-child"}
 {"created_at":"2026-03-03T20:32:18Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.3","type":"parent-child"}
 {"created_at":"2026-03-03T20:34:40Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-ufc","issue_id":"Bantu-ufc.4","type":"parent-child"}
+{"created_at":"2026-03-10T02:12:14Z","created_by":"Navakanth Gandavarapu","depends_on_id":"Bantu-w6z","issue_id":"Bantu-w6z.1","type":"parent-child"}
