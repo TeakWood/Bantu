@@ -9,7 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
-from nanobot.agent.registry import AGENT_REGISTRY, AgentRegistry
+from nanobot.agent.registry import AGENT_REGISTRY, AgentRuntimeRegistry
 from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import (
     AgentDefaults,
@@ -27,7 +27,7 @@ _config_lock: asyncio.Lock = asyncio.Lock()
 # Typed app-state keys — use web.AppKey to avoid string-key warnings and collisions.
 APP_KEY_CONFIG_LOCK: web.AppKey[asyncio.Lock] = web.AppKey("config_lock", asyncio.Lock)
 APP_KEY_CONFIG_PATH: web.AppKey[Path | None] = web.AppKey("config_path", Path)
-APP_KEY_AGENT_REGISTRY: web.AppKey[AgentRegistry] = web.AppKey("agent_registry", AgentRegistry)
+APP_KEY_AGENT_REGISTRY: web.AppKey[AgentRuntimeRegistry] = web.AppKey("agent_registry", AgentRuntimeRegistry)
 
 # Sensitive field name patterns — case-insensitive substring match on key name.
 _SENSITIVE_PATTERNS: tuple[str, ...] = ("token", "key", "secret", "password", "credential")
@@ -378,8 +378,8 @@ async def handle_put_agent(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-def _get_agent_registry(request: web.Request) -> AgentRegistry:
-    """Return the per-app AgentRegistry (falls back to module-level default)."""
+def _get_agent_registry(request: web.Request) -> AgentRuntimeRegistry:
+    """Return the per-app AgentRuntimeRegistry (falls back to module-level default)."""
     return request.app.get(APP_KEY_AGENT_REGISTRY, AGENT_REGISTRY)
 
 

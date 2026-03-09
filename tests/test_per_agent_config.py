@@ -13,7 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from nanobot.admin import routes as _routes
 from nanobot.admin.server import AdminServer
-from nanobot.agent.registry import AgentRegistry
+from nanobot.agent.registry import AgentRuntimeRegistry
 from nanobot.config.loader import load_config
 from nanobot.config.schema import (
     AdminConfig,
@@ -55,9 +55,9 @@ def _temp_config_file(initial: Config | None = None) -> Iterator[Path]:
 async def _client(
     server_config: Config,
     config_path: Path,
-    registry: AgentRegistry | None = None,
+    registry: AgentRuntimeRegistry | None = None,
 ) -> TestClient:
-    """Build a started TestClient, optionally injecting a custom AgentRegistry."""
+    """Build a started TestClient, optionally injecting a custom AgentRuntimeRegistry."""
     server = AdminServer(server_config, config_path=config_path)
     app = server._build_app()
     if registry is not None:
@@ -204,7 +204,7 @@ def test_agents_config_overrides_default_empty():
 
 async def test_get_agents_empty():
     """GET /api/agents returns an empty list when registry is empty and no overrides."""
-    registry = AgentRegistry()
+    registry = AgentRuntimeRegistry()
     with _temp_config_file() as path:
         client = await _client(_make_server_config(), path, registry=registry)
         try:
@@ -222,8 +222,8 @@ async def test_get_agents_empty():
 
 
 async def test_get_agents_from_registry():
-    """GET /api/agents lists agents registered in the AgentRegistry."""
-    registry = AgentRegistry()
+    """GET /api/agents lists agents registered in the AgentRuntimeRegistry."""
+    registry = AgentRuntimeRegistry()
     registry.register("code-agent")
     registry.register("research-agent")
 
@@ -250,7 +250,7 @@ async def test_get_agents_from_config_overrides():
     initial = Config()
     initial.agents.overrides["fast-agent"] = AgentOverride(model="openai/gpt-4o-mini")
 
-    registry = AgentRegistry()  # empty
+    registry = AgentRuntimeRegistry()  # empty
     with _temp_config_file(initial) as path:
         client = await _client(_make_server_config(), path, registry=registry)
         try:
@@ -273,7 +273,7 @@ async def test_get_agents_includes_resolved_config():
     initial = Config()
     initial.agents.overrides["my-agent"] = AgentOverride(model="openai/gpt-4o-mini")
 
-    registry = AgentRegistry()
+    registry = AgentRuntimeRegistry()
     with _temp_config_file(initial) as path:
         client = await _client(_make_server_config(), path, registry=registry)
         try:
@@ -439,7 +439,7 @@ async def test_get_agents_union_no_duplicates():
     initial = Config()
     initial.agents.overrides["shared-agent"] = AgentOverride(model="openai/gpt-4o-mini")
 
-    registry = AgentRegistry()
+    registry = AgentRuntimeRegistry()
     registry.register("shared-agent")
     registry.register("registry-only-agent")
 
