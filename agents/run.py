@@ -5,7 +5,24 @@ Run from a plain terminal OUTSIDE any Claude Code session:
     python agents/run.py
 
 The loop runs until no tasks remain, then sleeps and retries.
+
+.. deprecated::
+    This standalone task-orchestration launcher is superseded by the
+    multi-agent runtime in ``nanobot.agent.orchestrator.AgentOrchestrator``
+    for running specialised agents within the nanobot service.  This script
+    remains active for the Bantu development workflow (Silpi/Viharapala).
+    See follow-up chore: remove once the workflow migrates to AgentOrchestrator.
 """
+
+import warnings
+
+warnings.warn(
+    "agents/run.py is deprecated.  The multi-agent runtime is now provided by "
+    "nanobot.agent.orchestrator.AgentOrchestrator.  This script remains for the "
+    "Bantu development workflow and will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=1,
+)
 
 import json
 import os

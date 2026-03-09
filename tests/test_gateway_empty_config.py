@@ -198,16 +198,14 @@ def test_gateway_prints_warning_on_empty_config():
 
 
 def test_gateway_uses_null_provider_when_config_empty():
-    """The AgentLoop must be constructed with a NullProvider when no key is set."""
-    from typer.testing import CliRunner
+    """AgentOrchestrator._make_provider returns NullProvider when no API key is set."""
+    from pathlib import Path
 
-    from nanobot.cli.commands import app
+    from nanobot.agent.orchestrator import AgentOrchestrator
+    from nanobot.bus.queue import MessageBus
 
-    runner = CliRunner()
-    captured: list = []
+    bus = MessageBus()
+    orchestrator = AgentOrchestrator(bus, Config(), Path("agents"))
+    provider = orchestrator._make_provider()
 
-    with _make_gateway_mocks(captured_provider=captured):
-        runner.invoke(app, ["gateway"])
-
-    assert len(captured) == 1
-    assert isinstance(captured[0], NullProvider)
+    assert isinstance(provider, NullProvider)

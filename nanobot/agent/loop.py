@@ -65,6 +65,8 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        inbound_queue: asyncio.Queue | None = None,
+        agent_assets_dir: Path | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -83,7 +85,8 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
+        self._inbound_queue: asyncio.Queue | None = inbound_queue
+        self.context = ContextBuilder(workspace, agent_assets_dir=agent_assets_dir)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -264,7 +267,10 @@ class AgentLoop:
 
         while self._running:
             try:
-                msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
+                if self._inbound_queue is not None:
+                    msg = await asyncio.wait_for(self._inbound_queue.get(), timeout=1.0)
+                else:
+                    msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
 

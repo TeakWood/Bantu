@@ -82,6 +82,7 @@ async def _handle_inbound(request: web.Request) -> web.Response:
         media=data.get("media", []),
         metadata=data.get("metadata", {}),
         session_key_override=data.get("session_key_override"),
+        agent_id=data.get("agent_id"),
     )
     bus: MessageBus = request.app[_APP_KEY_BUS]
     await bus.publish_inbound(msg)

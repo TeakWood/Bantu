@@ -325,45 +325,20 @@ def test_remote_bus_outbound_size():
 # CLI — serve-agent
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SERVE_AGENT_PATCHES = [
-    "nanobot.config.loader.load_config",
-    "nanobot.cli.commands.sync_workspace_templates",
-    "nanobot.bus.queue.MessageBus",
-    "nanobot.session.manager.SessionManager",
-    "nanobot.cron.service.CronService",
-    "nanobot.agent.loop.AgentLoop",
-    "nanobot.heartbeat.service.HeartbeatService",
-    "nanobot.services.agent_server.AgentRestServer",
-    "nanobot.config.loader.get_data_dir",
-    "asyncio.run",
-]
-
-
 def _make_serve_agent_mocks():
     import contextlib
 
     @contextlib.contextmanager
     def _ctx():
         empty_config = Config()
-        mock_cron = MagicMock()
-        mock_cron.status.return_value = {"jobs": 0}
-
-        def _agent_factory(*args, **kwargs):
-            m = MagicMock()
-            m.model = "not-configured"
-            m.tools = {}
-            return m
+        mock_orchestrator = MagicMock()
 
         with (
             patch("nanobot.config.loader.load_config", return_value=empty_config),
             patch("nanobot.cli.commands.sync_workspace_templates"),
             patch("nanobot.bus.queue.MessageBus"),
-            patch("nanobot.session.manager.SessionManager"),
-            patch("nanobot.cron.service.CronService", return_value=mock_cron),
-            patch("nanobot.agent.loop.AgentLoop", side_effect=_agent_factory),
-            patch("nanobot.heartbeat.service.HeartbeatService", return_value=MagicMock()),
+            patch("nanobot.agent.orchestrator.AgentOrchestrator", return_value=mock_orchestrator),
             patch("nanobot.services.agent_server.AgentRestServer", return_value=MagicMock()),
-            patch("nanobot.config.loader.get_data_dir", return_value=MagicMock()),
             patch("asyncio.run", side_effect=lambda coro: coro.close()),
         ):
             yield
@@ -491,42 +466,33 @@ def test_gateway_distributed_mode_prints_agent_url():
     assert "http://agent:18792" in result.output
 
 
-def test_gateway_embedded_mode_unchanged():
-    """When agent_url is empty the gateway runs in the original embedded mode."""
+def test_gateway_embedded_mode_uses_orchestrator():
+    """When agent_url is empty the gateway runs in embedded mode with AgentOrchestrator."""
     from typer.testing import CliRunner
 
     from nanobot.cli.commands import app
-    from nanobot.providers.null_provider import NullProvider
 
     runner = CliRunner()
-    captured: list = []
+    created: list = []
 
-    def _agent_factory(*args, **kwargs):
-        captured.append(kwargs.get("provider"))
-        m = MagicMock()
-        m.model = "not-configured"
-        return m
-
-    mock_cron = MagicMock()
-    mock_cron.status.return_value = {"jobs": 0}
+    mock_orchestrator = MagicMock()
     mock_channels = MagicMock()
     mock_channels.enabled_channels = []
+
+    def _capture(*args, **kwargs):
+        created.append("orchestrator")
+        return mock_orchestrator
 
     with (
         patch("nanobot.config.loader.load_config", return_value=Config()),
         patch("nanobot.cli.commands.sync_workspace_templates"),
         patch("nanobot.bus.queue.MessageBus"),
-        patch("nanobot.session.manager.SessionManager"),
-        patch("nanobot.cron.service.CronService", return_value=mock_cron),
-        patch("nanobot.agent.loop.AgentLoop", side_effect=_agent_factory),
+        patch("nanobot.agent.orchestrator.AgentOrchestrator", side_effect=_capture),
         patch("nanobot.channels.manager.ChannelManager", return_value=mock_channels),
-        patch("nanobot.heartbeat.service.HeartbeatService", return_value=MagicMock()),
-        patch("nanobot.config.loader.get_data_dir", return_value=MagicMock()),
         patch("asyncio.run", side_effect=lambda coro: coro.close()),
     ):
         result = runner.invoke(app, ["gateway"])
 
     assert result.exit_code == 0
-    # Embedded mode must use NullProvider when no API key is configured.
-    assert len(captured) == 1
-    assert isinstance(captured[0], NullProvider)
+    # AgentOrchestrator must have been instantiated in embedded mode
+    assert len(created) == 1
