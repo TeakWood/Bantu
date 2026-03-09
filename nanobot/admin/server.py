@@ -98,9 +98,12 @@ class AdminServer:
 
         app = web.Application(middlewares=[cors_middleware, auth_middleware])
 
-        # Per-app lock and config path for route handlers (typed keys avoid warnings).
+        # Per-app lock, config path, and agent registry for route handlers.
         app[_routes.APP_KEY_CONFIG_LOCK] = asyncio.Lock()
         app[_routes.APP_KEY_CONFIG_PATH] = self._config_path
+
+        from nanobot.agent.registry import AGENT_REGISTRY
+        app[_routes.APP_KEY_AGENT_REGISTRY] = AGENT_REGISTRY
 
         # Static UI
         app.router.add_get("/", _handle_root)
@@ -126,6 +129,11 @@ class AdminServer:
         # --- Agent defaults ---
         app.router.add_get("/api/agent", _routes.handle_get_agent)
         app.router.add_put("/api/agent", _routes.handle_put_agent)
+
+        # --- Per-agent config overrides ---
+        app.router.add_get("/api/agents", _routes.handle_get_agents)
+        app.router.add_get("/api/agents/{name}/config", _routes.handle_get_agent_config)
+        app.router.add_put("/api/agents/{name}/config", _routes.handle_put_agent_config)
 
         return app
 

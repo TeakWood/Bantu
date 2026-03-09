@@ -216,10 +216,46 @@ class AgentDefaults(Base):
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
 
 
+class AgentOverride(Base):
+    """Per-agent config override.
+
+    All fields are optional; ``None`` means "inherit from defaults".
+    Non-None values win over the corresponding ``AgentDefaults`` field.
+    """
+
+    model: str | None = None
+    provider: str | None = None
+    max_tokens: int | None = None
+    temperature: float | None = None
+    max_tool_iterations: int | None = None
+    memory_window: int | None = None
+    reasoning_effort: str | None = None
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    overrides: dict[str, AgentOverride] = Field(default_factory=dict)
+
+
+def resolve_agent_config(agent_name: str, agents_cfg: "AgentsConfig") -> AgentDefaults:
+    """Return effective ``AgentDefaults`` for *agent_name*.
+
+    Merges the per-agent override (if any) on top of the global defaults.
+    Non-``None`` override fields take precedence; ``None`` means "use default".
+    """
+    defaults = agents_cfg.defaults
+    override = agents_cfg.overrides.get(agent_name)
+    if override is None:
+        return defaults
+
+    merged = defaults.model_copy()
+    for field_name in AgentOverride.model_fields:
+        val = getattr(override, field_name)
+        if val is not None:
+            setattr(merged, field_name, val)
+    return merged
 
 
 class ProviderConfig(Base):

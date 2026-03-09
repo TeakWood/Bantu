@@ -9,8 +9,14 @@ from typing import Any
 
 from aiohttp import web
 
+from nanobot.agent.registry import AGENT_REGISTRY, AgentRegistry
 from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import AgentDefaults, MCPServerConfig
+from nanobot.config.schema import (
+    AgentDefaults,
+    AgentOverride,
+    MCPServerConfig,
+    resolve_agent_config,
+)
 from nanobot.providers.registry import PROVIDERS, find_by_name
 
 # Module-level concurrency lock declaration (as required by spec).
@@ -21,6 +27,7 @@ _config_lock: asyncio.Lock = asyncio.Lock()
 # Typed app-state keys — use web.AppKey to avoid string-key warnings and collisions.
 APP_KEY_CONFIG_LOCK: web.AppKey[asyncio.Lock] = web.AppKey("config_lock", asyncio.Lock)
 APP_KEY_CONFIG_PATH: web.AppKey[Path | None] = web.AppKey("config_path", Path)
+APP_KEY_AGENT_REGISTRY: web.AppKey[AgentRegistry] = web.AppKey("agent_registry", AgentRegistry)
 
 # Sensitive field name patterns — case-insensitive substring match on key name.
 _SENSITIVE_PATTERNS: tuple[str, ...] = ("token", "key", "secret", "password", "credential")
@@ -361,6 +368,84 @@ async def handle_put_agent(request: web.Request) -> web.Response:
             raise web.HTTPBadRequest(reason=f"Invalid agent config: {exc}") from exc
 
         cfg.agents.defaults = updated
+        save_config(cfg, _get_config_path(request))
+
+    return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Helpers for per-agent config endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_agent_registry(request: web.Request) -> AgentRegistry:
+    """Return the per-app AgentRegistry (falls back to module-level default)."""
+    return request.app.get(APP_KEY_AGENT_REGISTRY, AGENT_REGISTRY)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/agents
+# ---------------------------------------------------------------------------
+
+
+async def handle_get_agents(request: web.Request) -> web.Response:
+    """List all known agents with their effective (resolved) config.
+
+    The agent list is the union of:
+    - names registered in the ``AgentRegistry`` (in-process, set at startup), and
+    - names present in ``agents.overrides`` in the persisted config.
+    """
+    cfg = load_config(_get_config_path(request))
+    registry = _get_agent_registry(request)
+
+    names: set[str] = set(registry.names()) | set(cfg.agents.overrides.keys())
+
+    result = [
+        {
+            "name": name,
+            "config": resolve_agent_config(name, cfg.agents).model_dump(by_alias=True),
+        }
+        for name in sorted(names)
+    ]
+    return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/agents/{name}/config
+# ---------------------------------------------------------------------------
+
+
+async def handle_get_agent_config(request: web.Request) -> web.Response:
+    """Return the effective resolved config for a named agent."""
+    name = request.match_info["name"]
+    cfg = load_config(_get_config_path(request))
+    resolved = resolve_agent_config(name, cfg.agents)
+    return web.json_response(resolved.model_dump(by_alias=True))
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/agents/{name}/config
+# ---------------------------------------------------------------------------
+
+
+async def handle_put_agent_config(request: web.Request) -> web.Response:
+    """Merge-update the per-agent override for *name* and persist to config file."""
+    name = request.match_info["name"]
+    body = await _parse_json_body(request)
+
+    async with _get_lock(request):
+        cfg = load_config(_get_config_path(request))
+
+        existing = cfg.agents.overrides.get(name)
+        current = existing.model_dump(by_alias=True) if existing is not None else {}
+        current.update(body)
+
+        try:
+            updated_override = AgentOverride.model_validate(current)
+        except Exception as exc:
+            raise web.HTTPBadRequest(reason=f"Invalid agent config: {exc}") from exc
+
+        cfg.agents.overrides[name] = updated_override
         save_config(cfg, _get_config_path(request))
 
     return web.json_response({"ok": True})
