@@ -18,8 +18,9 @@ class ContextBuilder:
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, agent_assets_dir: Path | None = None):
         self.workspace = workspace
+        self._agent_assets_dir = agent_assets_dir
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
 
@@ -91,11 +92,12 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """Load all bootstrap files from agent_assets_dir (if set) or workspace."""
         parts = []
+        source = self._agent_assets_dir if self._agent_assets_dir is not None else self.workspace
 
         for filename in self.BOOTSTRAP_FILES:
-            file_path = self.workspace / filename
+            file_path = source / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")

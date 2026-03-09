@@ -29,9 +29,61 @@ def timestamp() -> str:
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
 
+#: Sentinel name for the built-in default agent.
+DEFAULT_AGENT_NAME: str = "default"
+
+
 def safe_filename(name: str) -> str:
     """Replace unsafe path characters with underscores."""
     return _UNSAFE_CHARS.sub("_", name).strip()
+
+
+def get_agent_workspace(agent_name: str) -> Path:
+    """Return the runtime workspace for an agent.
+
+    The default agent uses the shared ``~/.bantu/workspace`` path (same as
+    :func:`get_workspace_path`).  Every other agent gets its own isolated
+    directory at ``~/.bantu/agents/<agent_name>/``.
+
+    Raises :exc:`ValueError` if *agent_name* contains path-traversal
+    characters (``/``, ``\\``, or ``..`` segments).
+    """
+    if agent_name != DEFAULT_AGENT_NAME:
+        if safe_filename(agent_name) != agent_name or ".." in agent_name.split("/"):
+            raise ValueError(
+                f"agent_name contains unsafe characters: {agent_name!r}"
+            )
+        return ensure_dir(Path.home() / ".bantu" / "agents" / agent_name)
+    return get_workspace_path()
+
+
+def _get_writable_workspace(workspace: Path, agent_name: str) -> Path:
+    """Validate that *workspace* is within the boundary for *agent_name*.
+
+    For specialized agents (``agent_name != DEFAULT_AGENT_NAME``) the workspace
+    must resolve inside ``~/.bantu/agents/<agent_name>/``.  Writing to the
+    default agent's workspace or to a sibling agent's directory is forbidden.
+
+    The default agent has no such restriction.
+
+    Returns *workspace* unchanged on success; raises :exc:`PermissionError`
+    on violation.
+    """
+    if agent_name == DEFAULT_AGENT_NAME:
+        return workspace
+
+    expected = (Path.home() / ".bantu" / "agents" / agent_name).resolve()
+    resolved = workspace.resolve()
+
+    try:
+        resolved.relative_to(expected)
+    except ValueError:
+        raise PermissionError(
+            f"Specialized agent '{agent_name}' cannot write to '{workspace}': "
+            f"path resolves outside its allowed workspace '{expected}'."
+        )
+
+    return workspace
 
 
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
