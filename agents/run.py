@@ -338,7 +338,7 @@ async def run_task_loop(task: dict, branch: str, start_round: int, start_state: 
                 run_cmd(["git", "merge", "--squash", branch])
                 run_cmd(["git", "commit", "-m", f"{task_id}: Merge {branch}"])
                 run_cmd(["git", "push"])
-                run_cmd(["git", "branch", "-d", branch])
+                run_cmd(["git", "branch", "-D", branch])
                 log("Merged and pushed.")
             else:
                 log(f"Branch {branch} not found locally — skipping merge (already merged).")
