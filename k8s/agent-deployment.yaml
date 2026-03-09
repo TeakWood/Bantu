@@ -1,0 +1,63 @@
+# ── Agent Service Deployment ───────────────────────────────────────────────────
+# Runs MessageBus + AgentLoop + CronService + HeartbeatService
+# and exposes them via a lightweight REST API on port 18792.
+#
+# Before applying, the runner substitutes ${BANTU_HOME} with the actual path
+# to the config directory (default: $HOME/.bantu).
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanobot-agent
+  namespace: bantu
+  labels:
+    app: nanobot-agent
+    app.kubernetes.io/part-of: bantu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanobot-agent
+  template:
+    metadata:
+      labels:
+        app: nanobot-agent
+    spec:
+      containers:
+        - name: agent
+          image: bantu-agent:local
+          imagePullPolicy: Never
+          command: ["nanobot", "serve-agent"]
+          ports:
+            - name: http
+              containerPort: 18792
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 18792
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 18792
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: bantu-config
+              mountPath: /root/.bantu
+      volumes:
+        - name: bantu-config
+          hostPath:
+            path: ${BANTU_HOME}
+            type: DirectoryOrCreate

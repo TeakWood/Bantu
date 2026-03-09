@@ -1,0 +1,24 @@
+# ── Gateway Service (NodePort) ─────────────────────────────────────────────────
+# Exposes the gateway to the local host.
+#
+# Access the gateway at http://localhost:18790 (minikube: use
+# `minikube service nanobot-gateway -n bantu --url`).
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: nanobot-gateway
+  namespace: bantu
+  labels:
+    app: nanobot-gateway
+    app.kubernetes.io/part-of: bantu
+spec:
+  type: NodePort
+  selector:
+    app: nanobot-gateway
+  ports:
+    - name: http
+      port: 18790
+      targetPort: 18790
+      nodePort: 30790
+      protocol: TCP

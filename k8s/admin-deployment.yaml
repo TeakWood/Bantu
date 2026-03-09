@@ -1,0 +1,63 @@
+# ── Admin UI Service Deployment ────────────────────────────────────────────────
+# Serves the Bantu admin REST API and static web UI on port 18791.
+# The gateway proxies /api/admin/* requests to this service.
+#
+# Before applying, the runner substitutes ${BANTU_HOME} with the actual path
+# to the config directory (default: $HOME/.bantu).
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanobot-admin
+  namespace: bantu
+  labels:
+    app: nanobot-admin
+    app.kubernetes.io/part-of: bantu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanobot-admin
+  template:
+    metadata:
+      labels:
+        app: nanobot-admin
+    spec:
+      containers:
+        - name: admin
+          image: bantu-admin:local
+          imagePullPolicy: Never
+          command: ["nanobot", "serve-admin", "--host", "0.0.0.0"]
+          ports:
+            - name: http
+              containerPort: 18791
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 18791
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 18791
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: bantu-config
+              mountPath: /root/.bantu
+      volumes:
+        - name: bantu-config
+          hostPath:
+            path: ${BANTU_HOME}
+            type: DirectoryOrCreate

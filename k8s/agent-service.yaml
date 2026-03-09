@@ -1,0 +1,21 @@
+# ── Agent Service (ClusterIP) ──────────────────────────────────────────────────
+# Internal service: only reachable from within the cluster.
+# The gateway references this as http://nanobot-agent:18792.
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: nanobot-agent
+  namespace: bantu
+  labels:
+    app: nanobot-agent
+    app.kubernetes.io/part-of: bantu
+spec:
+  type: ClusterIP
+  selector:
+    app: nanobot-agent
+  ports:
+    - name: http
+      port: 18792
+      targetPort: 18792
+      protocol: TCP

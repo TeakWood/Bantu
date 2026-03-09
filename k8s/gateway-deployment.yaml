@@ -1,0 +1,72 @@
+# ── Gateway Service Deployment ─────────────────────────────────────────────────
+# Accepts channel connections (Telegram, Discord, etc.) and forwards inbound
+# messages to the agent service.  Proxies admin-API requests to the admin
+# service.  Listens on port 18790.
+#
+# The two environment variables below put the gateway in distributed mode so it
+# forwards traffic to the agent and admin Kubernetes services.
+#
+# Before applying, the runner substitutes ${BANTU_HOME} with the actual path
+# to the config directory (default: $HOME/.bantu).
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanobot-gateway
+  namespace: bantu
+  labels:
+    app: nanobot-gateway
+    app.kubernetes.io/part-of: bantu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanobot-gateway
+  template:
+    metadata:
+      labels:
+        app: nanobot-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: bantu-gateway:local
+          imagePullPolicy: Never
+          command: ["nanobot", "gateway"]
+          ports:
+            - name: http
+              containerPort: 18790
+              protocol: TCP
+          env:
+            - name: NANOBOT_GATEWAY__SERVICES__AGENT_URL
+              value: "http://nanobot-agent:18792"
+            - name: NANOBOT_GATEWAY__SERVICES__ADMIN_URL
+              value: "http://nanobot-admin:18791"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 18790
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 18790
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: bantu-config
+              mountPath: /root/.bantu
+      volumes:
+        - name: bantu-config
+          hostPath:
+            path: ${BANTU_HOME}
+            type: DirectoryOrCreate
