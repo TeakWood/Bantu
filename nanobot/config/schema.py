@@ -262,7 +262,7 @@ class HeartbeatConfig(Base):
 class AdminConfig(Base):
     """Admin UI configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     token: str = ""  # Bearer token; empty = no auth required
     host: str = "127.0.0.1"  # Bind to localhost by default for security
     port: int = 18791  # Separate port from gateway messaging port
