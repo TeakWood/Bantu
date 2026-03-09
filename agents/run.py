@@ -324,6 +324,9 @@ async def run_task_loop(task: dict, branch: str, start_round: int, start_state: 
                 round_num += 1
                 state = "silpi_address"
                 continue
+            elif verdict == "viharapala-approved":
+                log(f"{task_id} approved by Viharapala — awaiting author sign-off. Exiting loop.")
+                return
             else:
                 log(f"Viharapala did not set a verdict (state='{verdict or 'none'}'). Re-running review...")
                 continue
