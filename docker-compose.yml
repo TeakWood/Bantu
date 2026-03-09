@@ -1,18 +1,78 @@
+# Bantu — monorepo docker-compose
+#
+# Three independent services share a single config volume:
+#
+#   nanobot-agent    Bus + AgentLoop REST API          → :18792
+#   nanobot-admin    Admin UI + config REST API         → :18791
+#   nanobot-gateway  Channel manager + admin proxy      → :18790
+#
+# The gateway is told where to find the other two via environment variables
+# that are read by pydantic-settings (NANOBOT_GATEWAY__SERVICES__*).
+#
+# Usage:
+#   docker compose up               # start all three services
+#   docker compose up nanobot-agent # start only the agent service
+#   docker compose run --rm nanobot-cli status
+# ─────────────────────────────────────────────────────────────────────────────
+
 x-common-config: &common-config
-  build:
-    context: .
-    dockerfile: Dockerfile
   volumes:
     - ~/.bantu:/root/.bantu
+  restart: unless-stopped
 
 services:
+  # ── Agent Service ──────────────────────────────────────────────────────────
+  nanobot-agent:
+    container_name: nanobot-agent
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    ports:
+      - "18792:18792"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ── Admin UI Service ───────────────────────────────────────────────────────
+  nanobot-admin:
+    container_name: nanobot-admin
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+    ports:
+      - "18791:18791"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # ── Gateway Service ────────────────────────────────────────────────────────
   nanobot-gateway:
     container_name: nanobot-gateway
     <<: *common-config
-    command: ["gateway"]
-    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
     ports:
-      - 18790:18790
+      - "18790:18790"
+    environment:
+      # Point the gateway at the other two services (Docker internal DNS).
+      - NANOBOT_GATEWAY__SERVICES__AGENT_URL=http://nanobot-agent:18792
+      - NANOBOT_GATEWAY__SERVICES__ADMIN_URL=http://nanobot-admin:18791
+    depends_on:
+      - nanobot-agent
+      - nanobot-admin
     deploy:
       resources:
         limits:
@@ -21,11 +81,16 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-  
+
+  # ── CLI helper (optional) ──────────────────────────────────────────────────
   nanobot-cli:
     <<: *common-config
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
     profiles:
       - cli
+    restart: "no"
     command: ["status"]
     stdin_open: true
     tty: true

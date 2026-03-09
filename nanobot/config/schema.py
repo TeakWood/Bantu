@@ -268,6 +268,23 @@ class AdminConfig(Base):
     port: int = 18791  # Separate port from gateway messaging port
 
 
+class ServicesConfig(Base):
+    """Remote service URLs for distributed (monorepo) deployment.
+
+    When ``agent_url`` is non-empty the gateway forwards inbound messages to
+    the agent service via HTTP and polls it for outbound messages instead of
+    running an embedded AgentLoop.
+
+    When ``admin_url`` is non-empty the gateway proxies ``/api/admin/*``
+    requests to the admin service instead of serving the admin UI in-process.
+
+    Empty strings mean "run embedded" (the default, backward-compatible mode).
+    """
+
+    agent_url: str = ""  # e.g. "http://localhost:18792"
+    admin_url: str = ""  # e.g. "http://localhost:18791"
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -275,6 +292,7 @@ class GatewayConfig(Base):
     port: int = 18790
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     admin: AdminConfig = Field(default_factory=AdminConfig)
+    services: ServicesConfig = Field(default_factory=ServicesConfig)
 
 
 class WebSearchConfig(Base):

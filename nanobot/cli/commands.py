@@ -255,15 +255,22 @@ def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
-    """Start the nanobot gateway."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    """Start the nanobot gateway (embedded or distributed).
+
+    In **embedded mode** (default) the gateway runs the full stack in a single
+    process: MessageBus, AgentLoop, ChannelManager, CronService,
+    HeartbeatService and optionally the Admin UI server.
+
+    In **distributed mode** — enabled by setting
+    ``gateway.services.agent_url`` in ``~/.bantu/config.json`` (or via the
+    environment variable ``NANOBOT_GATEWAY__SERVICES__AGENT_URL``) — the
+    gateway forwards channel messages to a remote agent service and polls it
+    for outbound messages.  An HTTP server starts on the gateway port to serve
+    a health endpoint and to proxy admin-API requests to the admin service when
+    ``gateway.services.admin_url`` is also set.
+    """
     from nanobot.channels.manager import ChannelManager
-    from nanobot.config.loader import get_data_dir, load_config
-    from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJob
-    from nanobot.heartbeat.service import HeartbeatService
-    from nanobot.session.manager import SessionManager
+    from nanobot.config.loader import load_config
 
     if verbose:
         import logging
@@ -273,6 +280,60 @@ def gateway(
 
     config = load_config()
     sync_workspace_templates(config.workspace_path)
+
+    svc = config.gateway.services
+    if svc.agent_url:
+        # ------------------------------------------------------------------
+        # Distributed mode — forward to remote agent and admin services.
+        # ------------------------------------------------------------------
+        from nanobot.services.gateway_server import GatewayHttpServer
+        from nanobot.services.remote_bus import RemoteMessageBus
+
+        bus = RemoteMessageBus(svc.agent_url)
+        channels = ChannelManager(config, bus)  # type: ignore[arg-type]
+
+        gw_server = GatewayHttpServer(
+            host=config.gateway.host,
+            port=port,
+            admin_url=svc.admin_url,
+        )
+
+        if channels.enabled_channels:
+            console.print(
+                f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}"
+            )
+        else:
+            console.print("[yellow]Warning: No channels enabled[/yellow]")
+        console.print(f"[green]✓[/green] Agent service: {svc.agent_url}")
+        if svc.admin_url:
+            console.print(f"[green]✓[/green] Admin proxy → {svc.admin_url}")
+
+        async def run_distributed():
+            try:
+                bus.start_polling()
+                await gw_server.start()
+                await channels.start_all()
+            except KeyboardInterrupt:
+                console.print("\nShutting down...")
+            finally:
+                bus.stop_polling()
+                await gw_server.stop()
+                await channels.stop_all()
+
+        asyncio.run(run_distributed())
+        return
+
+    # ------------------------------------------------------------------
+    # Embedded mode — original single-process gateway.
+    # ------------------------------------------------------------------
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.queue import MessageBus
+    from nanobot.config.loader import get_data_dir
+    from nanobot.cron.service import CronService
+    from nanobot.cron.types import CronJob
+    from nanobot.heartbeat.service import HeartbeatService
+    from nanobot.session.manager import SessionManager
+
     bus = MessageBus()
     provider = _make_provider(config, raise_on_missing=False)
     if provider is None:
@@ -457,6 +518,216 @@ def gateway(
     asyncio.run(run())
 
 
+# ============================================================================
+# Service Commands (distributed / monorepo mode)
+# ============================================================================
+
+
+@app.command("serve-agent")
+def serve_agent(
+    port: int = typer.Option(18792, "--port", "-p", help="Agent service port"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Agent service bind host"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+):
+    """Start the Bus + Agent service with a REST API.
+
+    This service runs the MessageBus, AgentLoop, CronService and
+    HeartbeatService and exposes them over HTTP so that the gateway can forward
+    messages to it:
+
+    \b
+      POST /api/inbound          Accept an inbound message from the gateway.
+      GET  /api/outbound         Long-poll for outbound messages.
+      GET  /api/health           Liveness probe.
+    """
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.queue import MessageBus
+    from nanobot.config.loader import get_data_dir, load_config
+    from nanobot.cron.service import CronService
+    from nanobot.cron.types import CronJob
+    from nanobot.heartbeat.service import HeartbeatService
+    from nanobot.services.agent_server import AgentRestServer
+    from nanobot.session.manager import SessionManager
+
+    if verbose:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+
+    console.print(f"{__logo__} Starting agent service on {host}:{port}...")
+
+    config = load_config()
+    sync_workspace_templates(config.workspace_path)
+
+    bus = MessageBus()
+    provider = _make_provider(config, raise_on_missing=False)
+    if provider is None:
+        from nanobot.providers.null_provider import NullProvider
+        provider = NullProvider()
+        console.print(
+            "[yellow]⚠ No API key configured.[/yellow] "
+            "The agent service will start, but cannot process requests until "
+            "an API key is added to [cyan]~/.bantu/config.json[/cyan]."
+        )
+
+    session_manager = SessionManager(config.workspace_path)
+    cron_store_path = get_data_dir() / "cron" / "jobs.json"
+    cron = CronService(cron_store_path)
+
+    agent_loop = AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=config.workspace_path,
+        model=config.agents.defaults.model,
+        temperature=config.agents.defaults.temperature,
+        max_tokens=config.agents.defaults.max_tokens,
+        max_iterations=config.agents.defaults.max_tool_iterations,
+        memory_window=config.agents.defaults.memory_window,
+        reasoning_effort=config.agents.defaults.reasoning_effort,
+        brave_api_key=config.tools.web.search.api_key or None,
+        web_proxy=config.tools.web.proxy or None,
+        exec_config=config.tools.exec,
+        cron_service=cron,
+        restrict_to_workspace=config.tools.restrict_to_workspace,
+        session_manager=session_manager,
+        mcp_servers=config.tools.mcp_servers,
+        channels_config=config.channels,
+    )
+
+    async def on_cron_job(job: CronJob) -> str | None:
+        from nanobot.agent.tools.cron import CronTool
+        from nanobot.agent.tools.message import MessageTool
+        reminder_note = (
+            "[Scheduled Task] Timer finished.\n\n"
+            f"Task '{job.name}' has been triggered.\n"
+            f"Scheduled instruction: {job.payload.message}"
+        )
+        cron_tool = agent_loop.tools.get("cron")
+        cron_token = None
+        if isinstance(cron_tool, CronTool):
+            cron_token = cron_tool.set_cron_context(True)
+        try:
+            response = await agent_loop.process_direct(
+                reminder_note,
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+            )
+        finally:
+            if isinstance(cron_tool, CronTool) and cron_token is not None:
+                cron_tool.reset_cron_context(cron_token)
+        message_tool = agent_loop.tools.get("message")
+        if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
+            return response
+        if job.payload.deliver and job.payload.to and response:
+            from nanobot.bus.events import OutboundMessage
+            await bus.publish_outbound(OutboundMessage(
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to,
+                content=response,
+            ))
+        return response
+
+    cron.on_job = on_cron_job
+
+    hb_cfg = config.gateway.heartbeat
+
+    async def on_heartbeat_execute(tasks: str) -> str:
+        return await agent_loop.process_direct(
+            tasks, session_key="heartbeat", channel="cli", chat_id="direct",
+            on_progress=lambda *_a, **_kw: None,  # type: ignore[arg-type]
+        )
+
+    async def on_heartbeat_notify(response: str) -> None:
+        pass  # No channel to deliver to in standalone agent mode
+
+    heartbeat = HeartbeatService(
+        workspace=config.workspace_path,
+        provider=provider,
+        model=agent_loop.model,
+        on_execute=on_heartbeat_execute,
+        on_notify=on_heartbeat_notify,
+        interval_s=hb_cfg.interval_s,
+        enabled=hb_cfg.enabled,
+    )
+
+    rest_server = AgentRestServer(bus=bus, host=host, port=port)
+
+    cron_status = cron.status()
+    if cron_status["jobs"] > 0:
+        console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
+    console.print(f"[green]✓[/green] Heartbeat: every {hb_cfg.interval_s}s")
+    console.print(f"[green]✓[/green] REST API: http://{host}:{port}")
+
+    async def run():
+        try:
+            await cron.start()
+            await heartbeat.start()
+            await rest_server.start()
+            await agent_loop.run()
+        except KeyboardInterrupt:
+            console.print("\nShutting down agent service...")
+        finally:
+            await agent_loop.close_mcp()
+            heartbeat.stop()
+            cron.stop()
+            agent_loop.stop()
+            await rest_server.stop()
+
+    asyncio.run(run())
+
+
+@app.command("serve-admin")
+def serve_admin(
+    port: int = typer.Option(18791, "--port", "-p", help="Admin service port"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Admin service bind host"),
+):
+    """Start the Admin UI service as a standalone HTTP server.
+
+    Exposes the same REST API as the embedded admin server so the gateway can
+    proxy requests to it:
+
+    \b
+      GET  /api/config           Read full configuration.
+      GET  /api/providers        List providers.
+      PUT  /api/providers/{name} Update a provider.
+      GET  /api/channels         List channels.
+      ... (full admin API)
+    """
+    from nanobot.admin.server import AdminServer
+    from nanobot.config.loader import load_config
+
+    config = load_config()
+
+    # Override the admin bind address/port from CLI flags.
+    from nanobot.config.schema import AdminConfig
+    config.gateway.admin = AdminConfig(
+        enabled=True,
+        token=config.gateway.admin.token,
+        host=host,
+        port=port,
+    )
+
+    console.print(f"{__logo__} Starting admin service on http://{host}:{port} ...")
+    if not config.gateway.admin.token:
+        console.print(
+            "[yellow]⚠ Admin service running with NO authentication"
+            " — any local process can read/write config[/yellow]"
+        )
+
+    admin_server = AdminServer(config)
+
+    async def run():
+        try:
+            await admin_server.start()
+            console.print(f"[green]✓[/green] Admin service ready at http://{host}:{port}")
+            # Keep running until interrupted.
+            await asyncio.Event().wait()
+        except KeyboardInterrupt:
+            console.print("\nShutting down admin service...")
+        finally:
+            await admin_server.stop()
+
+    asyncio.run(run())
 
 
 # ============================================================================
