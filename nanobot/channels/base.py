@@ -101,6 +101,8 @@ class BaseChannel(ABC):
             )
             return
 
+        agent_id: str | None = getattr(self.config, "agent", None) or None
+
         msg = InboundMessage(
             channel=self.name,
             sender_id=str(sender_id),
@@ -109,6 +111,7 @@ class BaseChannel(ABC):
             media=media or [],
             metadata=metadata or {},
             session_key_override=session_key,
+            agent_id=agent_id,
         )
 
         await self.bus.publish_inbound(msg)
