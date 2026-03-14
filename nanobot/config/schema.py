@@ -373,6 +373,22 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class TracingConfig(Base):
+    """Tracing configuration for LLM call observability via ArizeAI / Phoenix.
+
+    Traces are exported to a Phoenix-compatible OTLP endpoint and grouped
+    by agent ID and session key so every LLM call can be inspected in the
+    Phoenix UI at the correct scope.
+
+    Enable by setting ``tracing.enabled = true`` in ``~/.bantu/config.json``
+    or via the environment variable ``NANOBOT_TRACING__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    endpoint: str = "http://localhost:6006/v1/traces"  # Phoenix default OTLP endpoint
+    project_name: str = "nanobot"
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -381,6 +397,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
 
     @property
     def workspace_path(self) -> Path:

@@ -281,6 +281,9 @@ def gateway(
     config = load_config()
     sync_workspace_templates(config.workspace_path)
 
+    from nanobot.tracing.setup import setup_tracing
+    setup_tracing(config.tracing)
+
     svc = config.gateway.services
     if svc.agent_url:
         # ------------------------------------------------------------------
@@ -420,6 +423,9 @@ def serve_agent(
     config = load_config()
     sync_workspace_templates(config.workspace_path)
 
+    from nanobot.tracing.setup import setup_tracing
+    setup_tracing(config.tracing)
+
     bus = MessageBus()
     agents_dir = Path("agents")
     orchestrator = AgentOrchestrator(bus, config, agents_dir)
@@ -519,6 +525,9 @@ def agent(
 
     config = load_config()
     sync_workspace_templates(config.workspace_path)
+
+    from nanobot.tracing.setup import setup_tracing
+    setup_tracing(config.tracing)
 
     bus = MessageBus()
     provider = _make_provider(config)

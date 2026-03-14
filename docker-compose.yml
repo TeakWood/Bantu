@@ -82,6 +82,27 @@ services:
           cpus: '0.25'
           memory: 256M
 
+  # ── Phoenix tracing server (optional, enable with --profile tracing) ──────
+  #
+  # Provides the ArizeAI Phoenix UI and OTLP endpoint for LLM call traces.
+  #
+  # Usage:
+  #   docker compose --profile tracing up
+  #
+  # Then enable tracing in config.json:
+  #   { "tracing": { "enabled": true, "endpoint": "http://nanobot-phoenix:6006/v1/traces" } }
+  # Or via env var on the agent/gateway services:
+  #   NANOBOT_TRACING__ENABLED=true
+  #   NANOBOT_TRACING__ENDPOINT=http://nanobot-phoenix:6006/v1/traces
+  nanobot-phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: nanobot-phoenix
+    ports:
+      - "6006:6006"
+    restart: unless-stopped
+    profiles:
+      - tracing
+
   # ── CLI helper (optional) ──────────────────────────────────────────────────
   nanobot-cli:
     <<: *common-config
