@@ -137,6 +137,13 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 - Use different models or providers for different teams
 - Serve multiple tenants with separate configs and runtime data
 
+## Stronger Isolation
+
+The separation described above is a convention: instances run as the same OS
+user and can read each other's workspaces, config files and session stores. To
+have the operating system enforce the separation instead — including a
+per-instance environment and memory cap — see [Fleets](./fleet.md).
+
 ## Notes
 
 - Each instance must use a different port if they run at the same time

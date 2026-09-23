@@ -64,6 +64,7 @@ from nanobot.cli.webui_support import (  # noqa: E402
 )
 from nanobot.config.paths import get_workspace_path  # noqa: E402
 from nanobot.config.schema import Config  # noqa: E402
+from nanobot.fleet.cli import create_fleet_app  # noqa: E402
 from nanobot.security.network import is_loopback_host  # noqa: E402
 from nanobot.utils.helpers import sanitize_surrogates as _sanitize_surrogates  # noqa: E402,F401
 from nanobot.utils.helpers import (  # noqa: E402
@@ -460,6 +461,14 @@ app.add_typer(
 
 
 app.command(name="agent")(agent)
+
+
+# ============================================================================
+# Fleet Commands
+# ============================================================================
+
+
+app.add_typer(create_fleet_app(console=console), name="fleet")
 
 
 # ============================================================================

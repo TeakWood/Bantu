@@ -170,7 +170,7 @@ def _seatbelt_is_within(path: Path, root: Path) -> bool:
     return False
 
 
-def _sbpl_quote(path: str) -> str:
+def sbpl_quote(path: str) -> str:
     """Render *path* as an SBPL string literal.
 
     SBPL uses C-style string escaping, so a backslash or a double quote in a
@@ -214,7 +214,7 @@ def _seatbelt(
         sandbox_cwd = str(ws)
 
     def subpaths(paths: Iterable[str]) -> str:
-        return " ".join(f"(subpath {_sbpl_quote(p)})" for p in paths)
+        return " ".join(f"(subpath {sbpl_quote(p)})" for p in paths)
 
     ro_binds = _normalize_bind_paths(sandbox_ro_binds, workspace=ws)
     rw_binds = _normalize_bind_paths(sandbox_rw_binds, workspace=ws)
@@ -233,7 +233,7 @@ def _seatbelt(
         '(allow file-read* (literal "/"))',
         f"(allow file-read* {subpaths(_SEATBELT_SYSTEM_READ_SUBPATHS)})",
         "(allow file-read* "
-        + " ".join(f"(literal {_sbpl_quote(p)})" for p in _SEATBELT_SYSTEM_READ_LITERALS)
+        + " ".join(f"(literal {sbpl_quote(p)})" for p in _SEATBELT_SYSTEM_READ_LITERALS)
         + ")",
         '(allow file-write* (literal "/dev/null") (literal "/dev/zero"))',
     ]
@@ -242,7 +242,7 @@ def _seatbelt(
     # workspace subtree, because the last matching rule wins.
     parent = ws.parent
     if parent != ws and str(parent) != "/":
-        rules.append(f"(deny file-read* file-write* (subpath {_sbpl_quote(str(parent))}))")
+        rules.append(f"(deny file-read* file-write* (subpath {sbpl_quote(str(parent))}))")
 
     # Keep every ancestor of an allowed path searchable, including the masked
     # parent: metadata only, so it cannot be listed or read.
@@ -257,20 +257,20 @@ def _seatbelt(
     ]
     rules.append(
         "(allow file-read-metadata "
-        + " ".join(f"(literal {_sbpl_quote(p)})" for p in literals)
+        + " ".join(f"(literal {sbpl_quote(p)})" for p in literals)
         + ")"
     )
 
-    rules.append(f"(allow file-read* file-write* (subpath {_sbpl_quote(str(ws))}))")
-    rules.append(f"(allow file-read* (subpath {_sbpl_quote(str(media))}))")
-    rules.append(f"(deny file-write* (subpath {_sbpl_quote(str(media))}))")
+    rules.append(f"(allow file-read* file-write* (subpath {sbpl_quote(str(ws))}))")
+    rules.append(f"(allow file-read* (subpath {sbpl_quote(str(media))}))")
+    rules.append(f"(deny file-write* (subpath {sbpl_quote(str(media))}))")
 
     for p in ro_binds:
-        rules.append(f"(allow file-read* (subpath {_sbpl_quote(p)}))")
+        rules.append(f"(allow file-read* (subpath {sbpl_quote(p)}))")
         # A read allow does not revoke a broader write grant (e.g. workspace).
-        rules.append(f"(deny file-write* (subpath {_sbpl_quote(p)}))")
+        rules.append(f"(deny file-write* (subpath {sbpl_quote(p)}))")
     for p in rw_binds:
-        rules.append(f"(allow file-read* file-write* (subpath {_sbpl_quote(p)}))")
+        rules.append(f"(allow file-read* file-write* (subpath {sbpl_quote(p)}))")
 
     # Path-based read-only rules do not follow a renamed ancestor. Keep those
     # directory entries fixed without denying writes to their other children.
@@ -285,7 +285,7 @@ def _seatbelt(
     if ancestors:
         rules.append(
             "(deny file-write-unlink "
-            + " ".join(f"(literal {_sbpl_quote(p)})" for p in ancestors)
+            + " ".join(f"(literal {sbpl_quote(p)})" for p in ancestors)
             + ")"
         )
 

@@ -17,6 +17,7 @@ Use this page when you know what you want to run and need the command shape. For
 | Run the gateway directly | `nanobot gateway` | Service/ops command for WebUI, chat apps, cron, and heartbeat |
 | Deliver a local trigger | `nanobot trigger <id> "message"` | Created first with `/trigger <name>` in the target chat/session |
 | Serve an OpenAI-compatible API | `nanobot serve` | Starts `/v1/chat/completions`, `/v1/models`, and `/health` |
+| Run instances isolated from each other | `nanobot fleet start --fleet <path>` | macOS only; each instance gets its own confined process |
 | Check chat channel setup | `nanobot channels status` | Useful before starting `nanobot gateway` |
 | Manage optional features | `nanobot plugins list` | Shows channels and optional capabilities you can turn on |
 | Log in to QR/OAuth-style channels | `nanobot channels login <channel>` | Used by channels such as WhatsApp and WeChat |
@@ -332,6 +333,20 @@ http://127.0.0.1:8900
 Public binds (`0.0.0.0` or `::`) require `api.apiKey`; send it as a Bearer token on API routes.
 
 See [`openai-api.md`](./openai-api.md) for request examples.
+
+## Fleet (Process Isolation)
+
+Runs several instances at once, each in its own OS process, confined to its own
+workspace and config directory with its own environment and memory cap. macOS
+only.
+
+| Command | Description |
+|---|---|
+| `nanobot fleet start --fleet <path>` | Validate the fleet file, start every instance, supervise in the foreground |
+| `nanobot fleet status --fleet <path> --json` | Print one JSON object per instance (`name`, `pid`, `state`, `exit_reason`, `workspace`, `config_dir`, `memory_limit_mb`) |
+| `nanobot fleet stop --fleet <path>` | Stop every instance's process tree, then the supervisor |
+
+See [`fleet.md`](./fleet.md) for the fleet file format and guarantees.
 
 ## Status
 
