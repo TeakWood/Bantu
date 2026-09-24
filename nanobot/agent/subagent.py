@@ -207,6 +207,7 @@ class SubagentManager:
             exec=self.tools_config.exec,
             web=self.tools_config.web,
             file=self.tools_config.file,
+            cli_apps=self.tools_config.cli_apps,
             restrict_to_workspace=self.restrict_to_workspace,
         )
 

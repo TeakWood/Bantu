@@ -8,6 +8,7 @@ import pytest
 
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
+from nanobot.agent.tools.cli_apps import CliAppsToolConfig
 from nanobot.agent.tools.filesystem import FileToolsConfig
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ToolsConfig
@@ -83,6 +84,25 @@ def test_subagent_respects_file_tool_toggle(tmp_path):
         "write_file",
     }
     assert file_tools.isdisjoint(tools.tool_names)
+
+
+def test_subagent_respects_cli_apps_toggle(tmp_path):
+    """A disabled cliApps config must reach the subagent registry, not revert to its default."""
+    disabled = SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        tools_config=ToolsConfig(cli_apps=CliAppsToolConfig(enable=False)),
+    )
+    enabled = SubagentManager(
+        workspace=tmp_path,
+        bus=MessageBus(),
+        max_tool_result_chars=16_000,
+        tools_config=ToolsConfig(cli_apps=CliAppsToolConfig(enable=True)),
+    )
+
+    assert "run_cli_app" not in disabled._build_tools().tool_names
+    assert "run_cli_app" in enabled._build_tools().tool_names
 
 
 def test_subagent_prompt_keeps_agent_paths_for_selected_project(tmp_path):
