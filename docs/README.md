@@ -39,6 +39,7 @@ Pick the row that matches what you want to accomplish next:
 | Understand and manage long-term memory | [Memory](./memory.md) |
 | Run nanobot continuously | [Deployment](./deployment.md) |
 | Run separate bots or workspaces | [Multiple Instances](./multiple-instances.md) |
+| Run several agents in one install | [Named Agents](./configuration.md#named-agents) |
 | Call nanobot from Python | [Python SDK](./python-sdk.md) |
 | Expose an OpenAI-compatible endpoint | [OpenAI-Compatible API](./openai-api.md) |
 

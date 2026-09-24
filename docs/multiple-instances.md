@@ -2,6 +2,35 @@
 
 Run multiple nanobot instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. Optionally pass `--workspace` during `onboard` when you want to initialize or update the saved workspace for a specific instance.
 
+<a id="separate-processes-vs-named-agents"></a>
+## Separate Processes vs Named Agents
+
+There are two ways to run more than one agent, and they solve different problems.
+
+| | Separate processes (this page) | [Named agents](./configuration.md#named-agents) |
+|---|---|---|
+| Config files | One per instance | One, with an `agents.named` block |
+| Processes and ports | One gateway each, distinct `gateway.port` | One gateway, one port |
+| Workspace, memory, sessions | Isolated per instance | Isolated per agent |
+| Models and tools | Independent | Independent, inherited from `agents.defaults` unless overridden |
+| MCP servers | Independent | Independent; never inherited between agents |
+| Channels | Any channel, per instance | Telegram bots only; every other channel serves `default` |
+| Cron, Dream, heartbeat, local triggers | Each instance has its own | `default` only |
+| CLI and WebUI | One per instance | Talk to `default` |
+| Upgrades and restarts | Per instance | All agents restart together |
+
+Use **named agents** when you want several Telegram personas with separate
+memory and tools out of one install, one config file, and one process to
+supervise.
+
+Use **separate processes** when an agent needs its own schedule, its own WebUI
+or CLI surface, a non-Telegram channel of its own, a different nanobot version,
+or independent restarts. Multi-tenant deployments where the tenants must not
+share a process also belong here.
+
+The two compose: any one instance on this page can itself declare
+`agents.named` and run several Telegram bots.
+
 ## Quick Start
 
 If you want each instance to have its own dedicated workspace from the start, pass both `--config` and `--workspace` during onboarding.
@@ -136,6 +165,10 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 - Keep testing and production instances isolated
 - Use different models or providers for different teams
 - Serve multiple tenants with separate configs and runtime data
+
+If the only thing that differs between your instances is the Telegram bot,
+the workspace, and the model, [named agents](./configuration.md#named-agents)
+give you the same isolation inside one process.
 
 ## Notes
 

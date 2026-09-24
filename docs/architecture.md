@@ -32,6 +32,65 @@ Main files:
 | Context construction | `nanobot/agent/context.py` |
 | Session storage and compaction | `nanobot/session/manager.py` |
 | Long-term memory and Dream | `nanobot/agent/memory.py` |
+| Agent selection and per-agent composition | `nanobot/agents/` |
+
+## Multi-Agent Runtime
+
+The flow above is what one agent sees. `nanobot gateway` always runs a
+`MultiAgentRuntime` (`nanobot/agents/multi.py`) in front of it, even when the
+config declares only the default agent.
+
+```mermaid
+flowchart LR
+    Channels["ChannelManager"] --> ChannelBus["Channel MessageBus"]
+    ChannelBus --> Demux["MultiAgentRuntime<br/>route(config, channel, chat_id)"]
+    Demux --> BusA["default's MessageBus"]
+    Demux --> BusB["research's MessageBus"]
+    BusA --> LoopA["default AgentLoop"]
+    BusB --> LoopB["research AgentLoop"]
+    LoopA --> BusA
+    LoopB --> BusB
+    BusA -. outbound pump .-> ChannelBus
+    BusB -. outbound pump .-> ChannelBus
+    ChannelBus --> Channels
+```
+
+Every agent owns a private `MessageBus`. This is not a style choice:
+`MessageBus.inbound` is one `asyncio.Queue` and `consume_inbound()` *pops* from
+it, so N `AgentLoop`s sharing one bus would steal each other's messages. The
+runtime is what reconnects those private buses to the single bus
+`ChannelManager` speaks — a demux task on the inbound side, and one pump task
+per agent on the outbound side. Outbound needs no rewriting, because
+`OutboundMessage.channel` is already the runtime channel name and
+`ChannelManager` dispatches on it.
+
+Routing lives at the composition root, not in the loop. `.agent/design.md` is
+normative that `agent/loop.py` and `agent/runner.py` are the critical core path;
+deciding the agent inside `AgentLoop._effective_session_key` would have been the
+shorter diff but would couple routing to the thing being routed to. Nothing
+under `nanobot/agent/` knows that named agents exist.
+
+| Area | Files |
+|---|---|
+| Effective per-agent settings (the `agents.defaults` overlay) | `nanobot/agents/resolution.py` |
+| Agent list and the routing decision, from config alone | `nanobot/agents/registry.py` |
+| One isolated agent: bus, tools, MCP, sessions, loop | `nanobot/agents/runtime.py` |
+| Channel bus demux across N agents | `nanobot/agents/multi.py` |
+| In-process gateway harness for tests | `nanobot/agents/harness.py` |
+| Gateway composition root | `nanobot/cli/gateway_runtime.py` |
+
+`nanobot/agents/registry.py` is a pure function of `Config`: it starts no
+gateway, imports no channel SDK, and touches no network, which is what lets
+`nanobot agents list` render it and lets the composition root decide routing
+before any runtime exists.
+
+Scheduled work stays bound to `default`. `build_agent_runtime` passes
+`cron_service=None` for a named agent, and `CronTool` gates purely on
+`ctx.cron_service is not None`, so the tool is never even constructed for one.
+Dream, the gateway heartbeat, and the local trigger queue are wired against
+`runtime.default` for the same reason. See
+[Named Agents](./configuration.md#named-agents) for the user-facing contract and
+[the current boundaries](./configuration.md#named-agents-not-supported-yet).
 
 ## Agent Loop vs Agent Runner
 
@@ -100,8 +159,9 @@ Channels are discovered by scanning self-contained packages under `nanobot/chann
 
 - enabled chat channels;
 - the WebSocket channel when configured;
-- workspace-scoped cron service;
-- system jobs such as Dream and heartbeat;
+- a `MultiAgentRuntime` holding one agent per configured agent, `default` alone unless `agents.named` declares more;
+- workspace-scoped cron service, bound to `default`;
+- system jobs such as Dream and heartbeat, bound to `default`;
 - the health endpoint on `gateway.port`.
 
 The packaged WebUI is served by the WebSocket channel, not the health endpoint:
@@ -149,6 +209,7 @@ Defaults:
 |---|---|
 | Config | `~/.nanobot/config.json` |
 | Workspace | `~/.nanobot/workspace/` |
+| Named agent workspace | `~/.nanobot/agents/<name>/` when the entry configures none |
 | Sessions | `<config-dir>/sessions/<workspace-id>/*.jsonl` (default: `~/.nanobot/sessions/...`) |
 | Memory | `<workspace>/memory/` |
 | Cron store | `<workspace>/cron/jobs.json` |

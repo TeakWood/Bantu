@@ -40,6 +40,7 @@ the focused guides first and come back here for exact fields and defaults.
 | Configure credentials and endpoints | [Providers](#providers) |
 | Name and switch model choices | [Model Presets](#model-presets) |
 | Add fallback chains | [Model Fallbacks](#model-fallbacks) |
+| Run several agents in one install | [Named Agents](#named-agents) |
 | Configure voice transcription | [Transcription Settings](#transcription-settings) |
 | Tune channel defaults | [Channel Settings](#channel-settings) |
 | Configure web search and fetch | [Web Tools](#web-tools) |
@@ -67,6 +68,7 @@ If the WebUI does not expose the option you need, start from the task below. Mos
 | Tighten tool and network safety | `tools.restrictToWorkspace`, `tools.exec.sandbox`, `tools.ssrfWhitelist`, `channels.*.allowFrom` | Run the same workflow through the channel or CLI you plan to expose | [Security](#security), [Pairing](#pairing) |
 | Tune request timeouts or process concurrency | `NANOBOT_STREAM_IDLE_TIMEOUT_S`, `NANOBOT_MAX_CONCURRENT_REQUESTS` | Start nanobot from the same environment and inspect startup/runtime logs | [Runtime Environment Variables](#runtime-environment-variables) |
 | Run multiple isolated bots | separate `--config` and `--workspace` paths, plus distinct `gateway.port` or channel ports when processes run together | Use the same explicit paths with `nanobot status`, `agent`, `webui`, `gateway`, and `serve` | [Multiple Instances](./multiple-instances.md), [CLI Reference](./cli-reference.md) |
+| Run several agents in one gateway | `agents.named.<name>`, `channels.telegram.instances[].agent` | `nanobot agents list --json`, then `nanobot gateway --verbose` | [Named Agents](#named-agents), [Chat Apps](./chat-apps.md#telegram-multiple-bots-and-per-bot-agents) |
 | Observe model calls | `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL` environment variables | Run one model call, then check the matching Langfuse project | [Langfuse Observability](#langfuse-observability) |
 
 ## Environment Variables for Secrets
@@ -1543,6 +1545,142 @@ Use inline objects only when a fallback is not worth naming as a reusable preset
 Failover normally runs when the primary provider returns a fallbackable model/provider error before any answer text has been streamed. Stream-stall timeouts are the recovery exception: if the provider already emitted partial answer text and then stalls, nanobot closes the current stream segment and retries/fails over in a new segment. Typical fallback cases include timeouts, connection errors, 5xx server errors, 429 rate limits, overloads, authentication/permission failures such as invalid or expired credentials, and quota/balance exhaustion. It does not run for malformed requests, content filtering/refusals, or context-length/message-format errors.
 
 If fallback candidates use smaller `contextWindowTokens` values, nanobot builds context using the smallest window in the active chain so every candidate can receive the same prompt.
+
+## Named Agents
+
+`agents.named` runs several first-class agents inside one nanobot install, one config file, and one `nanobot gateway` process. A named agent is a peer of the existing agent, not a subagent: it has its own workspace (`SOUL.md`, `USER.md`, `memory/`), its own sessions, its own model settings, its own tools including its own MCP servers, and its own Telegram bot.
+
+The agent configured by `agents.defaults` is called `default`. It keeps every behavior it has today and answers every chat no named agent claims. An install with no `agents.named` block behaves exactly as before, and nanobot does not write the key back to `config.json`.
+
+```json
+{
+  "modelPresets": {
+    "fast": { "provider": "openai", "model": "gpt-4.1-mini" },
+    "deep": { "provider": "anthropic", "model": "claude-opus-4-5" }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.nanobot/workspace",
+      "modelPreset": "fast",
+      "maxTokens": 8192,
+      "timezone": "Asia/Shanghai"
+    },
+    "named": {
+      "research": {
+        "modelPreset": "deep",
+        "botName": "Scholar",
+        "tools": {
+          "mcpServers": {
+            "notes": {
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-memory"]
+            }
+          }
+        }
+      },
+      "ops": {
+        "workspace": "~/ops-workspace",
+        "model": "gpt-4.1-mini",
+        "timezone": "UTC",
+        "tools": {
+          "exec": {
+            "enable": false
+          }
+        }
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "instances": [
+        { "id": "default", "enabled": true, "token": "${TELEGRAM_DEFAULT_TOKEN}" },
+        { "id": "research", "enabled": true, "token": "${TELEGRAM_RESEARCH_TOKEN}", "agent": "research" },
+        { "id": "ops", "enabled": true, "token": "${TELEGRAM_OPS_TOKEN}", "agent": "ops" }
+      ]
+    }
+  }
+}
+```
+
+In that example, the `research` bot talks to the `research` agent, the `ops` bot talks to the `ops` agent, and everything else — the unbound Telegram bot, the WebUI, the CLI, and every other chat app — talks to `default`.
+
+Verify the result without starting a gateway:
+
+```bash
+nanobot agents list
+nanobot agents list --json
+```
+
+### Agent Names
+
+Each key under `agents.named` is the agent's name. Names must match `[a-z0-9][a-z0-9_-]*`: lowercase letters, digits, `-` and `_`, starting with a letter or digit. `default` is reserved for `agents.defaults` and is rejected as a key. An invalid name fails config validation at startup rather than being silently ignored.
+
+### What an Entry Accepts
+
+An `agents.named` entry accepts every field `agents.defaults` accepts, plus its own `tools` block:
+
+| Field | Inherited from `agents.defaults` when omitted |
+|---|---|
+| `workspace` | **No** — see [Resolution Rules](#resolution-rules) |
+| `modelPreset`, `model`, `provider` | Yes |
+| `maxTokens`, `contextWindowTokens`, `temperature`, `reasoningEffort` | Yes |
+| `fallbackModels` | Yes |
+| `maxToolIterations`, `maxConcurrentSubagents`, `maxToolResultChars`, `toolHintMaxLength` | Yes |
+| `providerRetryMode` | Yes |
+| `timezone`, `timezoneMode` | Yes |
+| `botName`, `botIcon` | Yes |
+| `unifiedSession`, `disabledSkills` | Yes |
+| `idleCompactAfterMinutes`, `idleCompactCheckIntervalSeconds` | Yes |
+| `dream` | Yes, field by field |
+| `tools` | Yes, field by field — except `tools.mcpServers`, see below |
+
+`tools` is the one field an entry accepts that `agents.defaults` does not. It mirrors the top-level `tools` section, so `tools.exec`, `tools.web`, `tools.mcpServers`, `tools.restrictToWorkspace`, and the rest are all valid inside an entry.
+
+### Resolution Rules
+
+An entry is read as an **overlay**, not a replacement. Only the fields the entry actually states win; anything it never mentions keeps the configured value from `agents.defaults` (or the top-level `tools` block), not the schema default. Overlays recurse into sub-objects, so `{"dream": {"intervalH": 6}}` overrides only the interval and leaves `dream.enabled` inherited.
+
+Two exceptions are deliberate:
+
+- **`workspace` is never inherited.** Two agents sharing a workspace would share `SOUL.md`, `USER.md`, and `memory/`, which is exactly what agent isolation forbids. An entry that states no `workspace` gets `~/.nanobot/agents/<name>/`, created and seeded on first start.
+- **`tools.mcpServers` is never inherited.** An agent has exactly the servers listed in its own `tools.mcpServers`, and the top-level `tools.mcpServers` block belongs to `default` alone. No agent can see another agent's MCP tools. Every other `tools` field merges normally.
+
+Two smaller rules follow the ones `agents.defaults` already uses:
+
+- An entry that states `model` without `modelPreset` deselects any inherited preset, the same way a `--model` override does.
+- An entry that states `timezone` without `timezoneMode` is read as manual mode, so an inherited `"auto"` cannot re-detect over it.
+
+nanobot writes back only the fields an entry actually stated, so saving settings from the WebUI does not freeze inherited values into each entry.
+
+### What Each Agent Owns
+
+| Per agent | Shared across the install |
+|---|---|
+| Workspace, `SOUL.md`, `USER.md`, `memory/` | The config file |
+| Sessions under `<config-dir>/sessions/<workspace-id>/` | Providers and `modelPresets` |
+| Model settings and fallback chain | The gateway process and its health endpoint |
+| Tool set, including its own MCP servers | Channel-level settings such as `channels.sendProgress` |
+| Background subagents | |
+
+Sessions are keyed per agent, so two bots handling the same Telegram chat ID write to different stores and neither can read the other's transcript.
+
+### Per-Bot Agent Binding
+
+A Telegram bot claims an agent with an `agent` field on its instance. See [Telegram multi-bot setup](./chat-apps.md#telegram-multiple-bots-and-per-bot-agents) for the full channel configuration.
+
+A bot with no `agent` field, and every non-Telegram channel, routes to `default`. A bot bound to a name that `agents.named` does not declare falls back to `default` with a warning in the gateway log — traffic is answered rather than dropped.
+
+<a id="named-agents-not-supported-yet"></a>
+### Not Supported Yet
+
+These boundaries are intentional in the current release:
+
+- **No scheduled work for named agents.** Cron, Dream, the gateway heartbeat, and local triggers run against `default`'s workspace only. The `cron` tool is not even offered to a named agent's model, so it cannot schedule work it would never run.
+- **Telegram is the only channel that can bind an agent.** Every other chat app, the WebSocket/WebUI channel, and the CLI serve `default`. Other multi-instance channels, such as `feishu.product`, route to `default` regardless of how many instances they run.
+- **The CLI and WebUI talk to `default`.** `nanobot agent`, `nanobot webui`, `/model`, skill toggles, and the WebUI settings pages all act on the default agent. `nanobot agents list` is the one command that reports every agent, and it only reads config.
+- **No live add or remove.** Changes to the set of agents — adding an entry, removing one, or rebinding a bot to another agent — take effect on the next gateway start. Provider credential and model-preset changes are still picked up by the running gateway, for named agents exactly as for `default`.
+
+If you need scheduled work, a non-Telegram channel, or a WebUI per agent, run separate processes instead — see [Multiple Instances](./multiple-instances.md#separate-processes-vs-named-agents).
 
 ## Transcription Settings
 

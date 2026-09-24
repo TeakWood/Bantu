@@ -12,6 +12,7 @@ Use this page when you know what you want to run and need the command shape. For
 | Use guided setup | `nanobot onboard --wizard` | Best when you prefer prompts over hand-editing JSON |
 | Open the browser workbench | `nanobot webui` | Prepares local WebUI settings, starts the gateway, and opens the browser |
 | Check readiness without calling a model | `nanobot status` | Summarizes config/workspace and validates the active provider/model configuration |
+| List configured agents | `nanobot agents list` | Reads config only; add `--json` for machine-readable output |
 | Send one test message | `nanobot -m "Hello!"` | First proof that install, config, provider, model, and workspace all work |
 | Chat in the terminal | `nanobot` | Interactive local chat; `nanobot agent` remains an explicit alias |
 | Run the gateway directly | `nanobot gateway` | Service/ops command for WebUI, chat apps, cron, and heartbeat |
@@ -142,6 +143,46 @@ Default paths:
 Status does not send a model request. On success, run the printed
 `nanobot agent -m "Hello!"` command to verify network access and credentials. On failure,
 follow the printed WebUI **Settings → Models** or `nanobot onboard --wizard` route.
+
+## Agents
+
+| Command | Description |
+|---|---|
+| `nanobot agents list` | Print a table of every configured agent, `default` first |
+| `nanobot agents list --json` | Print the same list as a JSON array |
+| `nanobot agents list --config <path>` | Read a specific config file |
+
+Each entry reports `name`, the absolute `workspace`, the resolved `model`, and
+the runtime `channels` bound to that agent:
+
+```bash
+nanobot agents list --json
+```
+
+```json
+[
+  {
+    "name": "default",
+    "workspace": "/home/you/.nanobot/workspace",
+    "model": "anthropic/claude-opus-4-5",
+    "channels": ["telegram"]
+  },
+  {
+    "name": "research",
+    "workspace": "/home/you/.nanobot/agents/research",
+    "model": "anthropic/claude-opus-4-5",
+    "channels": ["telegram.research"]
+  }
+]
+```
+
+The command resolves entirely from the config file. It starts no gateway,
+connects no channel, and does not resolve `${ENV_VAR}` secret references. With
+`--json`, stdout carries the JSON document alone. See
+[Named Agents](./configuration.md#named-agents) for the configuration.
+
+Note that `nanobot agents` (plural) inspects configured agents, while
+`nanobot agent` (singular) is the terminal chat command below.
 
 ## Agent CLI
 

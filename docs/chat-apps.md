@@ -233,6 +233,58 @@ Telegram uses long polling by default. To receive updates through a webhook, exp
 >
 > `webhookUrl` is the public HTTPS URL registered with Telegram. `webhookPath` is the local path nanobot listens on. They often use the same path, but may differ when a reverse proxy or tunnel rewrites the request path.
 
+<a id="telegram-multiple-bots-and-per-bot-agents"></a>
+**Multiple bots and per-bot agents (optional)**
+
+One gateway can run several Telegram bots. Replace the flat section with an
+`instances` list, giving each bot its own `id` and token:
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "instances": [
+        {
+          "id": "default",
+          "enabled": true,
+          "token": "${TELEGRAM_DEFAULT_TOKEN}",
+          "allowFrom": ["YOUR_USER_ID"]
+        },
+        {
+          "id": "research",
+          "enabled": true,
+          "token": "${TELEGRAM_RESEARCH_TOKEN}",
+          "agent": "research"
+        }
+      ]
+    }
+  }
+}
+```
+
+Instance rules:
+
+- `id` must match `[A-Za-z0-9_-]+` and be unique. A duplicate id is skipped with
+  a startup warning.
+- Any key you set outside `instances` is inherited by every instance, so shared
+  settings such as `proxy` or `sendProgress` do not have to be repeated.
+- The instance with id `default` keeps the runtime channel name `telegram`.
+  Every other instance becomes `telegram.<id>`, for example `telegram.research`.
+  That name is what appears in logs, session keys, and
+  `nanobot agents list --json`.
+- The flat single-bot form above is still valid and is read as one instance
+  with id `default`, so existing configs do not have to change.
+
+`agent` binds a bot to a [named agent](./configuration.md#named-agents). The bot
+in the example above talks to `agents.named.research`, with that agent's own
+workspace, memory, sessions, model, and MCP servers. A bot with no `agent`
+field talks to the default agent, as do all other chat apps, the WebUI, and the
+CLI. Telegram is currently the only channel that can bind an agent.
+
+```bash
+nanobot agents list
+```
+
 </details>
 
 <details>
