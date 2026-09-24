@@ -1,10 +1,22 @@
 """Configuration schema using Pydantic."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nanobot.config.timezone import detect_system_timezone
@@ -184,10 +196,93 @@ class AgentDefaults(Base):
         return value
 
 
+AGENT_NAME_PATTERN = r"[a-z0-9][a-z0-9_-]*"
+RESERVED_AGENT_NAME = "default"
+_AGENT_NAME_RE = re.compile(AGENT_NAME_PATTERN)
+
+
+def validate_agent_name(name: str) -> str:
+    """Return a usable `agents.named` key or raise ValueError explaining why not."""
+    if not _AGENT_NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"invalid agent name {name!r}: agent names must match {AGENT_NAME_PATTERN} "
+            "(lowercase letters, digits, '-' and '_', starting with a letter or digit)"
+        )
+    if name == RESERVED_AGENT_NAME:
+        raise ValueError(
+            f"agent name {name!r} is reserved for agents.defaults; choose another name"
+        )
+    return name
+
+
+def _prune_unset(model: BaseModel, data: dict[str, Any], *, by_alias: bool) -> dict[str, Any]:
+    """Drop keys the source config never stated, recursing into sub-models."""
+    pruned: dict[str, Any] = {}
+    for name, field in type(model).model_fields.items():
+        if name not in model.model_fields_set:
+            continue
+        key = (field.serialization_alias or name) if by_alias else name
+        if key not in data:
+            continue
+        value = getattr(model, name, None)
+        nested = data[key]
+        if isinstance(value, BaseModel) and isinstance(nested, dict):
+            pruned[key] = _prune_unset(value, cast(dict[str, Any], nested), by_alias=by_alias)
+        else:
+            pruned[key] = nested
+    return pruned
+
+
+class NamedAgentConfig(AgentDefaults):
+    """One entry under `agents.named` — a full peer of the default agent.
+
+    An entry accepts every `agents.defaults` field plus its own `tools` block,
+    and is read as an overlay: only the fields it actually states win over
+    `agents.defaults`. That makes `model_fields_set` load-bearing, so nothing
+    here may record a value the config file did not state — `resolve_timezone`
+    is neutralized and serialization drops anything outside the set.
+    """
+
+    tools: ToolsConfig = Field(default_factory=lambda: ToolsConfig())
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_timezone(cls, value: object) -> object:
+        """Keep timezone unset when absent so the entry inherits agents.defaults.
+
+        Overrides AgentDefaults, which injects a detected timezone and would
+        make every entry look like it configured one.
+        """
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_configured_fields(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict[str, Any]:
+        """Persist only configured fields so a save/load round-trip stays an overlay."""
+        dumped = cast(dict[str, Any], handler(self))
+        return _prune_unset(self, dumped, by_alias=bool(info.by_alias))
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    named: dict[str, NamedAgentConfig] = Field(
+        default_factory=dict,
+        exclude_if=lambda value: not value,
+    )  # Named agents, keyed by name; absent means the default agent alone
+
+    @field_validator("named")
+    @classmethod
+    def _validate_agent_names(
+        cls, value: dict[str, NamedAgentConfig]
+    ) -> dict[str, NamedAgentConfig]:
+        for name in value:
+            validate_agent_name(name)
+        return value
 
 
 class ProviderConfig(Base):
@@ -695,6 +790,8 @@ def _resolve_tool_config_refs() -> None:
     mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
 
     ToolsConfig.model_rebuild()
+    NamedAgentConfig.model_rebuild()  # declared above ToolsConfig, so its `tools` is a forward ref
+    AgentsConfig.model_rebuild()
     Config.model_rebuild()
 
 
