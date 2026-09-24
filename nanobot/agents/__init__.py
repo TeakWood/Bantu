@@ -1,5 +1,6 @@
 """Named agents: several first-class agents within one nanobot install."""
 
+from nanobot.agents.harness import GatewayHarness, open_gateway
 from nanobot.agents.multi import MultiAgentRuntime
 from nanobot.agents.registry import (
     AgentRegistryEntry,
@@ -24,6 +25,7 @@ __all__ = [
     "NAMED_AGENT_WORKSPACE_ROOT",
     "AgentRegistryEntry",
     "AgentRuntime",
+    "GatewayHarness",
     "MultiAgentRuntime",
     "ResolvedAgentConfig",
     "agent_names",
@@ -32,6 +34,7 @@ __all__ = [
     "build_agent_runtime",
     "named_agent_entry",
     "named_agent_workspace",
+    "open_gateway",
     "resolve_agent_config",
     "route",
 ]
