@@ -136,8 +136,14 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
 def _load_inspection_config(
     config: str | None = None,
     workspace: str | None = None,
+    *,
+    quiet: bool = False,
 ) -> tuple[Path, Config]:
-    """Load config for diagnostic commands without resolving secret env refs."""
+    """Load config for diagnostic commands without resolving secret env refs.
+
+    *quiet* suppresses the "Using config" notice, for commands whose stdout is a
+    machine-readable document rather than a report for a human to read.
+    """
     from nanobot.config.errors import ConfigLoadError
     from nanobot.config.loader import get_config_path, load_config, set_config_path
 
@@ -145,7 +151,8 @@ def _load_inspection_config(
     if config:
         config_path = Path(config).expanduser().resolve(strict=False)
         set_config_path(config_path)
-        console.print(f"[dim]Using config: {config_path}[/dim]")
+        if not quiet:
+            console.print(f"[dim]Using config: {config_path}[/dim]")
 
     display_path = config_path or get_config_path()
     try:
