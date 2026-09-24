@@ -1798,34 +1798,112 @@ async def test_send_delta_initial_send_keeps_message_in_thread() -> None:
 
 
 def test_derive_topic_session_key_uses_thread_id() -> None:
+    channel = TelegramChannel(TelegramConfig(), MessageBus())
     message = SimpleNamespace(
         chat=SimpleNamespace(type="supergroup"),
         chat_id=-100123,
         message_thread_id=42,
     )
 
-    assert TelegramChannel._derive_topic_session_key(message) == "telegram:-100123:topic:42"
+    assert channel._derive_topic_session_key(message) == "telegram:-100123:topic:42"
 
 
 def test_derive_topic_session_key_private_dm_thread() -> None:
     """Private DM threads (Telegram Threaded Mode) must get their own session key."""
+    channel = TelegramChannel(TelegramConfig(), MessageBus())
     message = SimpleNamespace(
         chat=SimpleNamespace(type="private"),
         chat_id=999,
         message_thread_id=7,
     )
-    assert TelegramChannel._derive_topic_session_key(message) == "telegram:999:topic:7"
+    assert channel._derive_topic_session_key(message) == "telegram:999:topic:7"
 
 
 def test_derive_topic_session_key_none_without_thread() -> None:
     """No thread id → no topic session key, regardless of chat type."""
+    channel = TelegramChannel(TelegramConfig(), MessageBus())
     for chat_type in ("private", "supergroup", "group"):
         message = SimpleNamespace(
             chat=SimpleNamespace(type=chat_type),
             chat_id=123,
             message_thread_id=None,
         )
-        assert TelegramChannel._derive_topic_session_key(message) is None
+        assert channel._derive_topic_session_key(message) is None
+
+
+def test_derive_topic_session_key_default_instance_is_byte_identical() -> None:
+    """The default instance must produce exactly the pre-namespacing literal."""
+    channel = TelegramChannel(TelegramConfig(), MessageBus())
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="supergroup"),
+        chat_id=-100123,
+        message_thread_id=42,
+    )
+
+    legacy = f"telegram:{message.chat_id}:topic:{message.message_thread_id}"
+    assert channel.name == "telegram"
+    assert channel.instance_id == "default"
+    assert channel._derive_topic_session_key(message) == legacy
+    assert channel._queue_key_for_message(message) == legacy
+
+
+def test_derive_topic_session_key_namespaces_named_instance() -> None:
+    """A second bot's group topics must not share the default bot's namespace."""
+    channel = TelegramChannel(TelegramConfig(instance_id="research"), MessageBus())
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="supergroup"),
+        chat_id=-100123,
+        message_thread_id=42,
+    )
+
+    assert channel.name == "telegram.research"
+    assert channel.instance_id == "research"
+    assert channel._derive_topic_session_key(message) == "telegram.research:-100123:topic:42"
+    assert (
+        channel._queue_key_for_message(message) == "telegram.research:-100123:topic:42"
+    )
+
+
+def test_queue_key_without_thread_uses_runtime_channel_name() -> None:
+    """The threadless ingress key is namespaced too, and unchanged for default."""
+    default = TelegramChannel(TelegramConfig(), MessageBus())
+    research = TelegramChannel(TelegramConfig(instance_id="research"), MessageBus())
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="supergroup"),
+        chat_id=-100123,
+        message_thread_id=None,
+    )
+
+    assert default._queue_key_for_message(message) == "telegram:-100123"
+    assert research._queue_key_for_message(message) == "telegram.research:-100123"
+
+
+def test_instance_id_threaded_from_config_dict() -> None:
+    """The persisted instance spec (camelCase instanceId) reaches the runtime."""
+    channel = TelegramChannel({"instanceId": "ops", "token": "t"}, MessageBus())
+
+    assert channel.instance_id == "ops"
+    assert channel.config.instance_id == "ops"
+    assert channel.name == "telegram.ops"
+
+
+def test_explicit_instance_id_argument_overrides_config() -> None:
+    channel = TelegramChannel(TelegramConfig(), MessageBus(), instance_id="ops")
+
+    assert channel.instance_id == "ops"
+    assert channel.name == "telegram.ops"
+
+
+def test_invalid_instance_id_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        TelegramChannel(TelegramConfig(), MessageBus(), instance_id="bad id")
+
+
+def test_class_level_name_stays_the_base_channel_name() -> None:
+    """Instance namespacing must not mutate the class attribute other bots read."""
+    TelegramChannel(TelegramConfig(instance_id="research"), MessageBus())
+
+    assert TelegramChannel.name == "telegram"
 
 
 def test_get_extension_falls_back_to_original_filename() -> None:

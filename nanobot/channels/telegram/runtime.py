@@ -32,6 +32,11 @@ from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.telegram.config import TelegramConfig, telegram_default_config
+from nanobot.channels.telegram.instances import (
+    DEFAULT_INSTANCE_ID,
+    runtime_channel_name,
+    validate_instance_id,
+)
 from nanobot.command.builtin import build_help_text
 from nanobot.config.paths import get_media_dir
 from nanobot.events import ContextCompactionEvent
@@ -487,9 +492,15 @@ class TelegramChannel(BaseChannel):
     def default_config(cls) -> dict[str, Any]:
         return telegram_default_config()
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: MessageBus, *, instance_id: str | None = None):
         if isinstance(config, dict):
             config = TelegramConfig.model_validate(config)
+        # Each bot carries its own identity so session keys, pairing and outbound
+        # routing stay namespaced per instance instead of sharing "telegram".
+        raw_instance_id = instance_id or getattr(config, "instance_id", "") or DEFAULT_INSTANCE_ID
+        self.instance_id = validate_instance_id(str(raw_instance_id))
+        # Set before super().__init__ so the bound logger records the runtime name.
+        self.name = runtime_channel_name(TelegramChannel.name, self.instance_id)
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self._app: TelegramApplication | None = None
@@ -1603,13 +1614,17 @@ class TelegramChannel(BaseChannel):
             is_dm=True,
         )
 
-    @staticmethod
-    def _derive_topic_session_key(message: Message) -> str | None:
-        """Derive topic-scoped session key for Telegram chats with threads."""
+    def _derive_topic_session_key(self, message: Message) -> str | None:
+        """Derive topic-scoped session key for Telegram chats with threads.
+
+        Namespaced by ``self.name`` — the runtime channel name — so group-topic
+        sessions belonging to different bots never collide.  For the default
+        instance ``self.name`` is ``"telegram"``, so the key is unchanged.
+        """
         message_thread_id = getattr(message, "message_thread_id", None)
         if message_thread_id is None:
             return None
-        return f"telegram:{message.chat_id}:topic:{message_thread_id}"
+        return f"{self.name}:{message.chat_id}:topic:{message_thread_id}"
 
     @staticmethod
     def _build_message_metadata(message: Message, user: User) -> dict[str, Any]:
@@ -1778,10 +1793,9 @@ class TelegramChannel(BaseChannel):
         if len(self._message_threads) > 1000:
             self._message_threads.pop(next(iter(self._message_threads)))
 
-    @staticmethod
-    def _queue_key_for_message(message: Message) -> str:
+    def _queue_key_for_message(self, message: Message) -> str:
         """Return the final nanobot session key used for ordered Telegram ingress."""
-        return TelegramChannel._derive_topic_session_key(message) or f"telegram:{message.chat_id}"
+        return self._derive_topic_session_key(message) or f"{self.name}:{message.chat_id}"
 
     @staticmethod
     def _sort_key_for_update(update: Update) -> tuple[int, int]:
