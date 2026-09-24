@@ -1,5 +1,11 @@
 """Named agents: several first-class agents within one nanobot install."""
 
+from nanobot.agents.registry import (
+    AgentRegistryEntry,
+    agent_names,
+    agent_registry,
+    route,
+)
 from nanobot.agents.resolution import (
     NAMED_AGENT_WORKSPACE_ROOT,
     ResolvedAgentConfig,
@@ -15,11 +21,15 @@ from nanobot.agents.runtime import (
 
 __all__ = [
     "NAMED_AGENT_WORKSPACE_ROOT",
+    "AgentRegistryEntry",
     "AgentRuntime",
     "ResolvedAgentConfig",
+    "agent_names",
+    "agent_registry",
     "bootstrap_agent_workspace",
     "build_agent_runtime",
     "named_agent_entry",
     "named_agent_workspace",
     "resolve_agent_config",
+    "route",
 ]
