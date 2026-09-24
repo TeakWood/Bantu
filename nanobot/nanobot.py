@@ -12,6 +12,7 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agents.registry import DEFAULT_AGENT_NAME, agent_config, agent_spec
 from nanobot.config.schema import Config
 from nanobot.providers.base import LLMUsage
 from nanobot.providers.image_generation import image_gen_provider_configs
@@ -40,6 +41,7 @@ from nanobot.sdk.types import (
     StreamEventType,
     result_from_response,
 )
+from nanobot.session.manager import SessionManager
 from nanobot.utils.llm_runtime import LLMRuntime
 
 __all__ = [
@@ -81,13 +83,42 @@ class Nanobot:
         *,
         config: Config | None = None,
         mcp_provider: MCPProvider | None = None,
+        agent_name: str = DEFAULT_AGENT_NAME,
     ) -> None:
         self._loop = loop
         self._config = config
         self._mcp_provider = mcp_provider
+        self._agent_name = agent_name
         self.sessions = SessionClient(loop)
         self.memory = MemoryClient(loop)
         self.runtime = RuntimeClient(loop)
+
+    @property
+    def agent_name(self) -> str:
+        """Return the name of the agent this instance runs."""
+        return self._agent_name
+
+    @property
+    def workspace(self) -> Path:
+        """Return this agent's workspace directory."""
+        return self._loop.workspace
+
+    def tool_names(self) -> list[str]:
+        """Return the names of the tools this agent's model is offered.
+
+        MCP tools are included once their servers have connected, which happens
+        on the first ``run``/``stream`` call or an explicit ``connect_mcp``.
+        """
+        return list(self._loop.tools.tool_names)
+
+    def subagent_tool_names(self) -> list[str]:
+        """Return the names of the tools a background subagent of this agent gets."""
+        return self._loop.subagents.tool_names()
+
+    async def connect_mcp(self) -> None:
+        """Connect this agent's MCP servers and register their tools."""
+        if self._mcp_provider is not None:
+            await self._mcp_provider.connect()
 
     @classmethod
     def from_config(
@@ -97,6 +128,7 @@ class Nanobot:
         workspace: str | Path | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        agent: str = DEFAULT_AGENT_NAME,
     ) -> Nanobot:
         """Create a Nanobot instance from a config file.
 
@@ -106,6 +138,9 @@ class Nanobot:
             workspace: Override the workspace directory from config.
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
+            agent: Name of the agent to build.  Defaults to ``default``, the
+                agent configured by ``agents.defaults`` and the top-level
+                ``tools`` block.
         """
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
@@ -116,10 +151,14 @@ class Nanobot:
             if not resolved.exists():
                 raise FileNotFoundError(f"Config not found: {resolved}")
 
-        config: Config = resolve_config_env_vars(
+        loaded: Config = resolve_config_env_vars(
             load_config(resolved),
             config_path=resolved,
         )
+        spec = agent_spec(loaded, agent)
+        # A scoped view carries the agent's own settings and tools, so every
+        # config-driven constructor below builds that agent's runtime unchanged.
+        config = agent_config(loaded, agent)
         if workspace is not None:
             config.agents.defaults.workspace = str(
                 Path(workspace).expanduser().resolve()
@@ -135,11 +174,17 @@ class Nanobot:
         mcp_provider = MCPProvider.from_config(config, tools)
         loop = AgentLoop.from_config(
             config,
+            # Each agent's sessions are stored apart from every other agent's,
+            # independently of any workspace override.
+            session_manager=SessionManager(
+                config.workspace_path,
+                sessions_root=spec.sessions_root,
+            ),
             image_generation_provider_configs=image_gen_provider_configs(config),
             hook_factories=[create_file_edit_activity_hook],
             tool_registry=tools,
         )
-        return cls(loop, config=config, mcp_provider=mcp_provider)
+        return cls(loop, config=config, mcp_provider=mcp_provider, agent_name=agent)
 
     async def run(
         self,

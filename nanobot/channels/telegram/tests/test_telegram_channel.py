@@ -1797,6 +1797,10 @@ async def test_send_delta_initial_send_keeps_message_in_thread() -> None:
     assert channel._app.bot.sent_messages[0]["message_thread_id"] == 42
 
 
+def _session_key_channel() -> TelegramChannel:
+    return TelegramChannel(TelegramConfig(token="123:abc"), MessageBus())
+
+
 def test_derive_topic_session_key_uses_thread_id() -> None:
     message = SimpleNamespace(
         chat=SimpleNamespace(type="supergroup"),
@@ -1804,7 +1808,8 @@ def test_derive_topic_session_key_uses_thread_id() -> None:
         message_thread_id=42,
     )
 
-    assert TelegramChannel._derive_topic_session_key(message) == "telegram:-100123:topic:42"
+    channel = _session_key_channel()
+    assert channel._derive_topic_session_key(message) == "telegram:-100123:topic:42"
 
 
 def test_derive_topic_session_key_private_dm_thread() -> None:
@@ -1814,18 +1819,35 @@ def test_derive_topic_session_key_private_dm_thread() -> None:
         chat_id=999,
         message_thread_id=7,
     )
-    assert TelegramChannel._derive_topic_session_key(message) == "telegram:999:topic:7"
+    channel = _session_key_channel()
+    assert channel._derive_topic_session_key(message) == "telegram:999:topic:7"
 
 
 def test_derive_topic_session_key_none_without_thread() -> None:
     """No thread id → no topic session key, regardless of chat type."""
+    channel = _session_key_channel()
     for chat_type in ("private", "supergroup", "group"):
         message = SimpleNamespace(
             chat=SimpleNamespace(type=chat_type),
             chat_id=123,
             message_thread_id=None,
         )
-        assert TelegramChannel._derive_topic_session_key(message) is None
+        assert channel._derive_topic_session_key(message) is None
+
+
+def test_session_keys_are_scoped_to_the_runtime_channel_name() -> None:
+    """A second bot in the same chat must not share the first bot's session."""
+    channel = _session_key_channel()
+    channel.name = "telegram.research"
+    plain = SimpleNamespace(
+        chat=SimpleNamespace(type="private"), chat_id=42, message_thread_id=None,
+    )
+    threaded = SimpleNamespace(
+        chat=SimpleNamespace(type="supergroup"), chat_id=-100, message_thread_id=7,
+    )
+
+    assert channel._queue_key_for_message(plain) == "telegram.research:42"
+    assert channel._derive_topic_session_key(threaded) == "telegram.research:-100:topic:7"
 
 
 def test_get_extension_falls_back_to_original_filename() -> None:

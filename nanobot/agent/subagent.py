@@ -210,6 +210,15 @@ class SubagentManager:
             restrict_to_workspace=self.restrict_to_workspace,
         )
 
+    def tool_names(self) -> list[str]:
+        """Return the names of the tools a spawned subagent is offered.
+
+        Always a subset of the parent agent's tool set: a subagent registry is
+        built from the ``subagent`` tool scope over the parent's own config, and
+        never receives the parent's MCP tools.
+        """
+        return list(self._build_tools().tool_names)
+
     def _build_tools(
         self,
         workspace: Path | None = None,

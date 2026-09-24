@@ -1,5 +1,10 @@
 # Multiple Instances
 
+> Looking for several agents inside **one** install, config and gateway — each
+> with its own memory, tools and Telegram bot? See
+> [Named Agents](./named-agents.md). Use this page when you need separate
+> processes, ports and credential environments.
+
 Run multiple nanobot instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. Optionally pass `--workspace` during `onboard` when you want to initialize or update the saved workspace for a specific instance.
 
 ## Quick Start

@@ -462,6 +462,52 @@ app.add_typer(
 app.command(name="agent")(agent)
 
 
+agents_app = typer.Typer(help="Inspect the agents declared in one config")
+app.add_typer(agents_app, name="agents")
+
+
+@agents_app.command("list")
+def agents_list(
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+) -> None:
+    """List every declared agent, `default` first."""
+    import json as json_module
+
+    from nanobot.agents import agent_channels, resolve_agent_specs
+
+    _, loaded = _load_inspection_config(config=config, quiet=json_output)
+    channels_by_agent = agent_channels(loaded)
+    payload = [
+        {
+            "name": spec.name,
+            "workspace": str(spec.workspace.resolve()),
+            "model": spec.model,
+            "channels": list(channels_by_agent.get(spec.name, ())),
+        }
+        for spec in resolve_agent_specs(loaded)
+    ]
+
+    if json_output:
+        console.print_json(json_module.dumps(payload))
+        return
+
+    table = Table(title="Agents")
+    table.add_column("Agent", style="cyan")
+    table.add_column("Model")
+    table.add_column("Channels")
+    table.add_column("Workspace", style="dim")
+    for entry in payload:
+        channels = cast(list[str], entry["channels"])
+        table.add_row(
+            cast(str, entry["name"]),
+            cast(str, entry["model"]),
+            ", ".join(channels) or "[dim]—[/dim]",
+            escape(cast(str, entry["workspace"])),
+        )
+    console.print(table)
+
+
 # ============================================================================
 # Session Commands
 # ============================================================================

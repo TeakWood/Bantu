@@ -87,6 +87,14 @@
       },
       "webhookMaxConnections": {
         "label": "Maximum webhook connections"
+      },
+      "name": {
+        "label": "Bot name",
+        "placeholder": "nanobot"
+      },
+      "agent": {
+        "label": "Agent",
+        "placeholder": "default"
       }
     }
   }

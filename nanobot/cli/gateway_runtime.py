@@ -17,6 +17,7 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agents.gateway import NamedAgentFleet
 from nanobot.cli import terminal as cli_terminal
 from nanobot.cli.runtime_config import _migrate_cron_store
 from nanobot.cli.webui_support import (
@@ -408,7 +409,21 @@ def _run_gateway(
         webui_static_dist=webui_static_dist,
     )
     sync_workspace_templates(config.workspace_path)
-    bus = MessageBus()
+    # Named agents run beside this runtime, which owns `default`. `bus` stays
+    # the default agent's bus and the one every channel publishes onto; when
+    # anything is bound it also diverts that bot's traffic to its agent's
+    # private queue. A config that binds nothing keeps the plain bus.
+    named_agents = NamedAgentFleet(config)
+    bus: MessageBus = named_agents.host_bus() if named_agents.routes_traffic else MessageBus()
+    for stranded in named_agents.unroutable_channels:
+        console.print(
+            f"[yellow]Warning: channel '{stranded}' is bound to an agent that is not "
+            "running; its messages will be dropped, not served by 'default'.[/yellow]"
+        )
+    if named_agents:
+        console.print(
+            f"[green]✓[/green] Named agents: {', '.join(named_agents.agent_names)}"
+        )
     fallback_model_observer = build_webui_fallback_model_observer(bus)
 
     def _observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
@@ -929,7 +944,13 @@ def _run_gateway(
                 if orphaned:
                     logger.info("Last local client disappeared; stopping on-demand gateway")
 
+            # Every named agent runs alongside the default one, replying on the
+            # same bus the channels consume, so a bound bot's traffic is served
+            # by its own agent instead of landing in the default agent's store.
+            named_agent_tasks = await named_agents.start(bus)
+
             tasks = [
+                *named_agent_tasks,
                 asyncio.create_task(
                     watch_config_file(
                         Path(config_path),
@@ -1015,6 +1036,7 @@ def _run_gateway(
                     tasks,
                     runtime_tasks,
                 )
+                await named_agents.aclose()
                 await bus.drain()
                 # Flush all cached sessions to durable storage before exit.
                 # This prevents data loss on filesystems with write-back

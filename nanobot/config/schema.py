@@ -1,6 +1,7 @@
 """Configuration schema using Pydantic."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
@@ -184,10 +185,60 @@ class AgentDefaults(Base):
         return value
 
 
+DEFAULT_AGENT_NAME = "default"
+AGENT_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+class NamedAgentConfig(Base):
+    """One named agent declared under ``agents.named``.
+
+    Accepts every field ``agents.defaults`` accepts, plus a ``tools`` block with
+    the same shape as the top-level one. Values stay raw so resolution can tell
+    an explicit override from an inherited default — ``agents.defaults`` is the
+    base layer and only the keys written here are laid over it.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    workspace: str | None = None
+    tools: dict[str, Any] | None = None
+
+    @field_validator("tools")
+    @classmethod
+    def validate_tools(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Reject a malformed tools block at load time, but keep it raw."""
+        if value is not None:
+            ToolsConfig.model_validate(value)
+        return value
+
+    def setting_overrides(self) -> dict[str, Any]:
+        """Return only the agent-settings fields this entry states explicitly."""
+        return self.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_unset=True,
+            exclude={"tools"},
+        )
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    named: dict[str, NamedAgentConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_named_agent_names(self) -> "AgentsConfig":
+        for name in self.named:
+            if name == DEFAULT_AGENT_NAME:
+                raise ValueError(
+                    f"agent name {DEFAULT_AGENT_NAME!r} is reserved for agents.defaults"
+                )
+            if not AGENT_NAME_PATTERN.fullmatch(name):
+                raise ValueError(
+                    f"invalid agent name {name!r}: must match [a-z0-9][a-z0-9_-]*"
+                )
+        return self
 
 
 class ProviderConfig(Base):
@@ -445,6 +496,11 @@ class Config(BaseSettings):
     def bind_source_path(self, path: Path) -> None:
         """Record the config file that owns instance-level runtime data."""
         self._source_path = path.expanduser().resolve(strict=False)
+
+    @property
+    def source_path(self) -> Path | None:
+        """Return the config file this instance was loaded from, if any."""
+        return self._source_path
 
     @property
     def runtime_data_dir(self) -> Path | None:
