@@ -3,6 +3,7 @@
 from nanobot.channels._manifest import GROUP_POLICIES, field, required
 from nanobot.channels.contracts import ChannelSetupSpec
 from nanobot.channels.plugin import ChannelPlugin
+from nanobot.channels.telegram.instances import TELEGRAM_MANAGEMENT
 from nanobot.channels.telegram.validation import validate
 
 SETUP_SPEC = ChannelSetupSpec(
@@ -26,6 +27,8 @@ SETUP_SPEC = ChannelSetupSpec(
         "webhookPath": field(default="/telegram"),
         "webhookSecretToken": field("secret"),
         "webhookMaxConnections": field("int", default=4),
+        "instanceId": field(writable=False, snapshot=False),
+        "agent": field(writable=False, snapshot=False),
     },
     required=(required("token"),),
     official_url="https://t.me/BotFather",
@@ -38,6 +41,7 @@ PLUGIN = ChannelPlugin(
     display_name="Telegram",
     runtime=f"{__package__}.runtime:TelegramChannel",
     setup=SETUP_SPEC,
+    management=TELEGRAM_MANAGEMENT,
     dependencies=(
         "python-telegram-bot[socks,webhooks]>=22.6,<23.0",
         "socksio>=1.0.0,<2.0.0",
