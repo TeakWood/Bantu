@@ -26,6 +26,20 @@ def named_agent_workspace(name: str) -> str:
     return f"{NAMED_AGENT_WORKSPACE_ROOT}/{name}"
 
 
+def named_agent_entry(config: Config, name: str) -> NamedAgentConfig:
+    """Return the ``agents.named`` entry for *name*.
+
+    Raises:
+        KeyError: if no agent is configured under that name, naming the ones
+            that are.
+    """
+    entry = config.agents.named.get(name)
+    if entry is None:
+        known = ", ".join(sorted({RESERVED_AGENT_NAME, *config.agents.named}))
+        raise KeyError(f"unknown agent {name!r}; configured agents: {known}")
+    return entry
+
+
 def _overlay(base: BaseModel, override: BaseModel) -> Any:
     """Return a copy of *base* with the fields *override* actually states laid over it.
 
@@ -141,11 +155,7 @@ def resolve_agent_config(config: Config, name: str = RESERVED_AGENT_NAME) -> Res
     if name == RESERVED_AGENT_NAME:
         return ResolvedAgentConfig(name=name, config=resolved)
 
-    entry = config.agents.named.get(name)
-    if entry is None:
-        known = ", ".join(sorted({RESERVED_AGENT_NAME, *config.agents.named}))
-        raise KeyError(f"unknown agent {name!r}; configured agents: {known}")
-
+    entry = named_agent_entry(config, name)
     resolved.agents.defaults = _resolve_defaults(name, config.agents.defaults, entry)
     resolved.tools = _resolve_tools(config.tools, entry)
     return ResolvedAgentConfig(name=name, config=resolved)

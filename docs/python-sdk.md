@@ -266,6 +266,25 @@ The config controls what nanobot may use. The workspace is where nanobot keeps
 state for that instance. See [multiple-instances.md](multiple-instances.md) for
 multi-instance CLI and gateway examples.
 
+### Drive a named agent
+
+`Nanobot.from_config()` builds the `default` agent — the one that owns the
+top-level `agents.defaults` and `tools` blocks. Pass `agent=` to build an agent
+configured under `agents.named` instead:
+
+```python
+async with Nanobot.from_config(agent="research") as bot:
+    print(bot.agent_name)                    # "research"
+    print(bot.workspace)                     # that agent's own workspace
+    print(await bot.tool_names())            # its tools, its MCP servers included
+    print(await bot.subagent_tool_names())   # what its background subagents get
+```
+
+Each agent has its own workspace, sessions, memory, and MCP servers: one
+agent's MCP tools never appear in another's `tool_names()`. `workspace=`,
+`model=` and `model_preset=` override the agent you asked for, not the default
+one. An unconfigured name raises `KeyError`.
+
 ### Choose a default or per-run model
 
 Set the SDK instance default model when you create the bot:

@@ -12,7 +12,9 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import Config
+from nanobot.agents.resolution import named_agent_entry
+from nanobot.agents.runtime import build_agent_runtime
+from nanobot.config.schema import RESERVED_AGENT_NAME, AgentDefaults, Config, NamedAgentConfig
 from nanobot.providers.base import LLMUsage
 from nanobot.providers.image_generation import image_gen_provider_configs
 from nanobot.sdk.clients import MemoryClient, RuntimeClient, SessionClient
@@ -65,6 +67,31 @@ __all__ = [
 ]
 
 
+def _override_target(config: Config, agent: str) -> AgentDefaults | NamedAgentConfig:
+    """Return the config block the agent called *agent* resolves its settings from."""
+    if agent == RESERVED_AGENT_NAME:
+        return config.agents.defaults
+    return named_agent_entry(config, agent)
+
+
+def _apply_agent_overrides(
+    target: AgentDefaults | NamedAgentConfig,
+    *,
+    workspace: str | Path | None,
+    model: str | None,
+    model_preset: str | None,
+) -> None:
+    """Write the caller's overrides onto one agent's config block."""
+    if workspace is not None:
+        target.workspace = str(Path(workspace).expanduser().resolve())
+    if model is not None:
+        target.model_preset = None
+        target.model = model
+        target.provider = "auto"
+    elif model_preset is not None:
+        target.model_preset = model_preset
+
+
 class Nanobot:
     """Programmatic facade for running the nanobot agent.
 
@@ -81,13 +108,46 @@ class Nanobot:
         *,
         config: Config | None = None,
         mcp_provider: MCPProvider | None = None,
+        agent_name: str = RESERVED_AGENT_NAME,
     ) -> None:
         self._loop = loop
         self._config = config
         self._mcp_provider = mcp_provider
+        self._agent_name = agent_name
         self.sessions = SessionClient(loop)
         self.memory = MemoryClient(loop)
         self.runtime = RuntimeClient(loop)
+
+    @property
+    def agent_name(self) -> str:
+        """The name of the agent this instance drives (``default`` unless named)."""
+        return self._agent_name
+
+    @property
+    def workspace(self) -> Path:
+        """The workspace this agent owns — never another agent's."""
+        return self._loop.workspace
+
+    async def tool_names(self) -> list[str]:
+        """Return the names of the tools this agent's model is offered.
+
+        MCP tools are registered into the shared registry when the provider
+        connects rather than at discovery time, so the provider is connected
+        first — the same lazy connect :meth:`run` performs.
+        """
+        if self._mcp_provider is not None:
+            await self._mcp_provider.connect()
+        return list(self._loop.tool_names)
+
+    async def subagent_tool_names(self) -> list[str]:
+        """Return the names of the tools a background subagent is offered.
+
+        This is the registry ``SubagentManager`` builds for a spawned subagent,
+        read without running one.  MCP tools are absent by construction: the
+        subagent registry is loaded with the ``subagent`` scope and MCP tools
+        are only ever registered into the agent's own shared registry.
+        """
+        return list(self._loop.subagents.build_tool_registry().tool_names)
 
     @classmethod
     def from_config(
@@ -97,6 +157,7 @@ class Nanobot:
         workspace: str | Path | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        agent: str = RESERVED_AGENT_NAME,
     ) -> Nanobot:
         """Create a Nanobot instance from a config file.
 
@@ -106,6 +167,13 @@ class Nanobot:
             workspace: Override the workspace directory from config.
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
+            agent: Which configured agent to build.  ``default`` — the value
+                used when it is omitted — builds the agent that owns the
+                top-level blocks, exactly as before.  Any other name must
+                appear under ``agents.named``.
+
+        Raises:
+            KeyError: if *agent* names an agent that is not configured.
         """
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
@@ -120,16 +188,25 @@ class Nanobot:
             load_config(resolved),
             config_path=resolved,
         )
-        if workspace is not None:
-            config.agents.defaults.workspace = str(
-                Path(workspace).expanduser().resolve()
+        # Overrides are written onto the block the requested agent resolves
+        # from, so `--workspace`/`--model` mean the same thing for a named
+        # agent as they do for default rather than being silently discarded by
+        # the overlay (a named agent never inherits `workspace`).
+        _apply_agent_overrides(
+            _override_target(config, agent),
+            workspace=workspace,
+            model=model,
+            model_preset=model_preset,
+        )
+
+        if agent != RESERVED_AGENT_NAME:
+            runtime = build_agent_runtime(config, agent)
+            return cls(
+                runtime.loop,
+                config=runtime.config,
+                mcp_provider=runtime.mcp_provider,
+                agent_name=agent,
             )
-        if model is not None:
-            config.agents.defaults.model_preset = None
-            config.agents.defaults.model = model
-            config.agents.defaults.provider = "auto"
-        elif model_preset is not None:
-            config.agents.defaults.model_preset = model_preset
 
         tools = ToolRegistry()
         mcp_provider = MCPProvider.from_config(config, tools)

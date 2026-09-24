@@ -211,12 +211,18 @@ class SubagentManager:
             restrict_to_workspace=self.restrict_to_workspace,
         )
 
-    def _build_tools(
+    def build_tool_registry(
         self,
         workspace: Path | None = None,
         tools_config: ToolsConfig | None = None,
     ) -> ToolRegistry:
-        """Build an isolated subagent tool registry via ToolLoader."""
+        """Build an isolated subagent tool registry via ToolLoader.
+
+        Public so a caller can read the tool set a spawned subagent is offered
+        without running one — the SDK facade's ``subagent_tool_names()`` reads
+        exactly this registry rather than reimplementing the scope filter, so
+        the two can never drift.
+        """
         root = self.workspace if workspace is None else workspace
         registry = ToolRegistry()
         cfg = tools_config if tools_config is not None else self._subagent_tools_config()
@@ -416,7 +422,7 @@ class SubagentManager:
                 cfg = self._subagent_tools_config()
                 cfg.restrict_to_workspace = workspace_scope.restrict_to_workspace
             # Construct from the agent workspace; the bound scope below supplies the project cwd.
-            tools = self._build_tools(tools_config=cfg)
+            tools = self.build_tool_registry(tools_config=cfg)
             system_prompt = self._build_subagent_prompt(workspace=root)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},

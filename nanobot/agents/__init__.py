@@ -3,6 +3,7 @@
 from nanobot.agents.resolution import (
     NAMED_AGENT_WORKSPACE_ROOT,
     ResolvedAgentConfig,
+    named_agent_entry,
     named_agent_workspace,
     resolve_agent_config,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "ResolvedAgentConfig",
     "bootstrap_agent_workspace",
     "build_agent_runtime",
+    "named_agent_entry",
     "named_agent_workspace",
     "resolve_agent_config",
 ]

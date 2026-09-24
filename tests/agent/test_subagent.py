@@ -33,7 +33,7 @@ async def test_subagent_uses_tool_loader():
         bus=MessageBus(),
         max_tool_result_chars=16_000,
     )
-    tools = sm._build_tools()
+    tools = sm.build_tool_registry()
     assert tools.has("read_file")
     assert tools.has("write_file")
     assert not tools.has("message")
@@ -52,8 +52,8 @@ async def test_subagent_build_tools_isolates_file_read_state(tmp_path):
         max_tool_result_chars=16_000,
     )
 
-    first_read = sm._build_tools().get("read_file")
-    second_read = sm._build_tools().get("read_file")
+    first_read = sm.build_tool_registry().get("read_file")
+    second_read = sm.build_tool_registry().get("read_file")
 
     assert first_read is not second_read
     assert (await first_read.execute(path="note.txt")).startswith("1| hello")
@@ -72,7 +72,7 @@ def test_subagent_respects_file_tool_toggle(tmp_path):
         tools_config=ToolsConfig(file=FileToolsConfig(enable=False)),
     )
 
-    tools = sm._build_tools()
+    tools = sm.build_tool_registry()
 
     file_tools = {
         "apply_patch",
@@ -101,8 +101,8 @@ def test_subagent_respects_cli_apps_toggle(tmp_path):
         tools_config=ToolsConfig(cli_apps=CliAppsToolConfig(enable=True)),
     )
 
-    assert "run_cli_app" not in disabled._build_tools().tool_names
-    assert "run_cli_app" in enabled._build_tools().tool_names
+    assert "run_cli_app" not in disabled.build_tool_registry().tool_names
+    assert "run_cli_app" in enabled.build_tool_registry().tool_names
 
 
 def test_subagent_prompt_keeps_agent_paths_for_selected_project(tmp_path):
