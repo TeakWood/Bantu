@@ -23,7 +23,12 @@ from nanobot.utils.helpers import sync_workspace_templates
 if TYPE_CHECKING:
     from nanobot.cron.service import CronService
 
-__all__ = ["AgentRuntime", "build_agent_runtime", "bootstrap_agent_workspace"]
+__all__ = [
+    "AgentRuntime",
+    "agent_session_manager",
+    "bootstrap_agent_workspace",
+    "build_agent_runtime",
+]
 
 
 class MCPReadinessHook(AgentHook):
@@ -47,6 +52,25 @@ def bootstrap_agent_workspace(workspace: Path) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     sync_workspace_templates(workspace, silent=True)
     return workspace
+
+
+def agent_session_manager(agent_config: Config) -> SessionManager:
+    """Build the session store one agent owns, keyed by its own workspace.
+
+    Sessions live under the shared runtime data directory rather than inside the
+    workspace, in a subdirectory :class:`SessionManager` derives from the
+    workspace id — so two agents cannot collide even though the root is shared.
+
+    Exposed separately from :func:`build_agent_runtime` because a composition
+    root often needs the store before the loop exists: a turn delivery factory
+    and a recovery coordinator both take it and are themselves loop arguments.
+    """
+    data_dir = agent_config.runtime_data_dir
+    if data_dir is None:
+        # Keep the call byte-identical to a plain single-agent composition, which
+        # lets SessionManager apply its own runtime-subdirectory default.
+        return SessionManager(agent_config.workspace_path)
+    return SessionManager(agent_config.workspace_path, sessions_root=data_dir / "sessions")
 
 
 @dataclass(frozen=True)
@@ -129,7 +153,7 @@ def build_agent_runtime(
     """
     resolved = resolve_agent_config(config, name)
     agent_config = resolved.config
-    workspace = bootstrap_agent_workspace(agent_config.workspace_path)
+    bootstrap_agent_workspace(agent_config.workspace_path)
 
     agent_bus = bus if bus is not None else MessageBus()
     tools = ToolRegistry()
@@ -144,11 +168,7 @@ def build_agent_runtime(
 
     sessions = loop_kwargs.pop("session_manager", None)
     if sessions is None:
-        data_dir = agent_config.runtime_data_dir
-        sessions = SessionManager(
-            workspace,
-            sessions_root=data_dir / "sessions" if data_dir is not None else None,
-        )
+        sessions = agent_session_manager(agent_config)
 
     hooks = [MCPReadinessHook(mcp_provider), *(loop_kwargs.pop("hooks", None) or [])]
     hook_factories = loop_kwargs.pop("hook_factories", None) or [

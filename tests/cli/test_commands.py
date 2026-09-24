@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn_delivery import TurnDeliveryFactory
+from nanobot.agents import runtime as agents_runtime
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.cli import commands as cli_commands
@@ -2090,6 +2091,10 @@ def _patch_cli_command_runtime(
         monkeypatch.setattr("nanobot.bus.queue.MessageBus", message_bus)
     if session_manager is not None:
         monkeypatch.setattr("nanobot.session.manager.SessionManager", session_manager)
+        # The gateway builds each agent's store through nanobot.agents.runtime,
+        # which binds SessionManager at import time. Patch that name too, or the
+        # substitution silently depends on which test imported the module first.
+        monkeypatch.setattr("nanobot.agents.runtime.SessionManager", session_manager)
     if cron_service is not None:
         monkeypatch.setattr("nanobot.cron.service.CronService", cron_service)
     if get_cron_dir is not None:
@@ -2170,7 +2175,7 @@ def test_heartbeat_empty_response_is_not_evaluated(
         session_manager=_FakeSessionManager,
         cron_service=_FakeCron,
     )
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cli.gateway_runtime.read_webui_sidebar_state", lambda: {})
     monkeypatch.setattr("nanobot.cli.gateway_runtime.evaluate_response", _unexpected_evaluator)
@@ -3136,7 +3141,7 @@ def test_gateway_unbound_agent_cron_is_skipped(
         raise AssertionError("unbound cron job must not be evaluated for delivery")
 
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _StopAfterCronSetup)
     monkeypatch.setattr(
         "nanobot.cli.gateway_runtime.evaluate_response",
@@ -3252,7 +3257,7 @@ def test_gateway_bound_cron_runs_as_session_turn(
         raise AssertionError("bound cron must not use legacy response evaluator")
 
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCron)
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _StopAfterCronSetup)
     monkeypatch.setattr("nanobot.cli.gateway_runtime.evaluate_response", _unexpected_evaluator)
 
@@ -3493,7 +3498,7 @@ def test_gateway_local_trigger_queue_submits_agent_turns(
         seen["local_trigger_queue_kwargs"] = kwargs
         raise _StopGatewayError("stop")
 
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr(
         "nanobot.triggers.local_runner.run_local_trigger_queue",
@@ -3790,7 +3795,7 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
         message_bus=MessageBus,
         session_manager=lambda _workspace: _EmptyGatewaySessionManager(),
     )
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
     monkeypatch.setattr("asyncio.start_server", _fake_start_server)
@@ -3889,14 +3894,22 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
         assert timed_out_writer.output == b""
 
 
-def test_gateway_agent_task_owns_initial_mcp_provider_close(
+def test_gateway_runtime_task_owns_initial_mcp_connect(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """MCP is connected by the multi-agent runtime task and closed once, on stop.
+
+    The single-agent gateway connected and closed MCP inside the agent-loop task
+    itself. ``MultiAgentRuntime`` owns startup for every agent, so the connect
+    now belongs to its task and the close belongs to gateway teardown alone.
+    """
     config_file = _write_instance_config(tmp_path)
     config = Config()
     config.gateway.port = 18791
     seen: dict[str, object] = {}
+    mcp_order: list[str] = []
+    agent_started = asyncio.Event()
 
     class _FakeSessionManager:
         def flush_all(self) -> int:
@@ -3919,6 +3932,8 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
 
         async def run(self) -> None:
             seen["agent_task"] = asyncio.current_task()
+            mcp_order.append("agent_run")
+            agent_started.set()
             try:
                 await asyncio.Event().wait()
             finally:
@@ -3946,9 +3961,11 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
 
         async def connect(self) -> None:
             self.connect_task = asyncio.current_task()
+            mcp_order.append("connect")
 
         async def aclose(self) -> None:
             self.close_tasks.append(asyncio.current_task())
+            mcp_order.append("close")
 
         def runtime_status(self) -> dict[str, str]:
             return {}
@@ -3990,6 +4007,9 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
             return False
 
         async def serve_forever(self) -> None:
+            # Stop only once the agent loop is live, so the assertions below
+            # describe a fully started gateway rather than a startup race.
+            await agent_started.wait()
             raise _StopGatewayError("stop")
 
     async def _fake_start_server(_handler, _host: str, _port: int):
@@ -4001,8 +4021,8 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
         message_bus=MessageBus,
         session_manager=lambda _workspace: _EmptyGatewaySessionManager(),
     )
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.MCPProvider", _FakeMCPProvider)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.MCPProvider", _FakeMCPProvider)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
     monkeypatch.setattr("asyncio.start_server", _fake_start_server)
@@ -4018,14 +4038,19 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
     assert seen["cron_stopped"] is True
     mcp_provider = seen["mcp_provider"]
     assert isinstance(mcp_provider, _FakeMCPProvider)
-    assert mcp_provider.connect_task is seen["agent_task"]
-    assert mcp_provider.close_tasks[0] is mcp_provider.connect_task
-    assert len(mcp_provider.close_tasks) == 2
+    # Connected by the multi-agent runtime ahead of every agent loop, and closed
+    # exactly once by gateway teardown rather than by the agent task itself.
+    connect_task = mcp_provider.connect_task
+    assert connect_task is not None
+    assert connect_task is not seen["agent_task"]
+    assert len(mcp_provider.close_tasks) == 1
+    assert mcp_provider.close_tasks[0] is not connect_task
+    assert mcp_order == ["connect", "agent_run", "close"]
     hooks = seen["hooks"]
     assert isinstance(hooks, list)
     assert len(hooks) == 1
     hook = hooks[0]
-    assert isinstance(hook, cli_gateway_runtime._MCPReadinessHook)
+    assert isinstance(hook, agents_runtime.MCPReadinessHook)
 
 
 def test_gateway_shutdown_event_exits_forever_runtime_tasks(
@@ -4037,6 +4062,7 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
     config.gateway.port = 18791
     seen: dict[str, object] = {}
     shutdown_order: list[str] = []
+    agent_started = asyncio.Event()
 
     class _FakeSessionManager:
         def flush_all(self) -> int:
@@ -4057,6 +4083,7 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
             return None
 
         async def run(self) -> None:
+            agent_started.set()
             try:
                 await asyncio.Event().wait()
             finally:
@@ -4114,7 +4141,10 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
 
     def _fake_install_shutdown_handlers(_loop, event, _tasks, _print_status):
         async def _trigger_shutdown() -> None:
-            await asyncio.sleep(0)
+            # Wait for the agent loop to actually be running, so this exercises a
+            # shutdown of live forever-tasks rather than one that lands during
+            # MultiAgentRuntime startup (where no loop is started at all).
+            await agent_started.wait()
             event.set()
 
         asyncio.create_task(_trigger_shutdown())
@@ -4130,7 +4160,7 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
         message_bus=MessageBus,
         session_manager=lambda _workspace: _EmptyGatewaySessionManager(),
     )
-    monkeypatch.setattr("nanobot.cli.gateway_runtime.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.agents.runtime.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
     monkeypatch.setattr("asyncio.start_server", _fake_start_server)

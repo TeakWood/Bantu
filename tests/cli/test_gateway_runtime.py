@@ -14,10 +14,10 @@ from contextlib import suppress
 from nanobot.agent.hook import AgentRunHookContext
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agents.runtime import MCPReadinessHook
 from nanobot.cli.gateway_runtime import (
     _close_gateway_runtime,
     _gateway_readiness_payload,
-    _MCPReadinessHook,
 )
 
 
@@ -98,7 +98,7 @@ def test_gateway_readiness_is_degraded_when_required_websocket_is_unavailable() 
 
 async def test_mcp_readiness_hook_delegates_to_application_provider() -> None:
     provider = _TrackingMCPProvider()
-    hook = _MCPReadinessHook(provider)
+    hook = MCPReadinessHook(provider)
 
     await hook.before_run(AgentRunHookContext(messages=[]))
 

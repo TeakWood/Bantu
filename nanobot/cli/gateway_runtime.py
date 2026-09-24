@@ -12,11 +12,8 @@ from loguru import logger
 from rich.console import Console
 
 from nanobot import __logo__, __version__
-from nanobot.agent.hook import AgentHook, AgentRunHookContext
-from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.cli import terminal as cli_terminal
 from nanobot.cli.runtime_config import _migrate_cron_store
 from nanobot.cli.webui_support import (
@@ -46,17 +43,6 @@ from nanobot.webui.sidebar_state import read_webui_sidebar_state
 __all__ = ["_run_gateway"]
 
 console = Console()
-
-
-class _MCPReadinessHook(AgentHook):
-    """Retry application-owned MCP connections before the runner reads tools."""
-
-    def __init__(self, provider: MCPProvider) -> None:
-        super().__init__()
-        self._provider = provider
-
-    async def before_run(self, context: AgentRunHookContext) -> None:
-        await self._provider.connect()
 
 
 def _http_endpoint_responding(url: str, *, timeout_s: float = 0.25) -> bool:
@@ -292,6 +278,7 @@ async def _close_gateway_runtime(
     tasks: list[asyncio.Task[Any]],
     runtime_tasks: asyncio.Future[list[Any]] | None,
     *,
+    extra_closers: Iterable[tuple[str, Callable[[], Awaitable[None]]]] = (),
     task_wait_timeout: float = 15.0,
     close_timeout: float = 15.0,
 ) -> None:
@@ -302,6 +289,10 @@ async def _close_gateway_runtime(
     and the application-owned MCP provider are torn down. The final close is
     bounded and idempotent, so it also covers a cancelled or incomplete loop
     cleanup without leaving subprocess transports alive past ``loop.close()``.
+
+    ``agent`` and ``mcp_provider`` are the default agent's; ``extra_closers``
+    carries every named agent's own ``aclose``, so each is bounded and logged
+    individually and one failing agent never skips another's cleanup.
     """
     # Some SDKs swallow task cancellation while attempting to reconnect.
     # Close channel transports before waiting for their runners to exit.
@@ -325,6 +316,7 @@ async def _close_gateway_runtime(
     for label, close in (
         ("agent", agent.aclose),
         ("MCP provider", mcp_provider.aclose),
+        *extra_closers,
     ):
         try:
             await asyncio.wait_for(close(), timeout=close_timeout)
@@ -356,8 +348,17 @@ def _run_gateway(
     from nanobot.agent.model_presets import load_model_preset_catalog
     from nanobot.agent.tools.message import MessageTool
     from nanobot.agent.turn_delivery import TurnDeliveryFactory
+    from nanobot.agents.multi import MultiAgentRuntime
+    from nanobot.agents.registry import agent_names
+    from nanobot.agents.resolution import resolve_agent_config
+    from nanobot.agents.runtime import (
+        AgentRuntime,
+        agent_session_manager,
+        build_agent_runtime,
+    )
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.manager import ChannelManager
+    from nanobot.config.schema import RESERVED_AGENT_NAME
     from nanobot.config.watcher import watch_config_file
     from nanobot.cron.bound_runner import run_bound_cron_job
     from nanobot.cron.service import CronJobSkippedError, CronService
@@ -373,7 +374,6 @@ def _run_gateway(
     )
     from nanobot.providers.fallback_provider import FallbackProvider
     from nanobot.providers.image_generation import image_gen_provider_configs
-    from nanobot.session.manager import SessionManager
     from nanobot.session.recovery import RecoveryCoordinator
     from nanobot.session.webui_turns import (
         WebuiTurnCoordinator,
@@ -408,8 +408,15 @@ def _run_gateway(
         webui_static_dist=webui_static_dist,
     )
     sync_workspace_templates(config.workspace_path)
+    # The channel-facing bus ChannelManager speaks, and the default agent's own
+    # private bus.  They are separate because MultiAgentRuntime demuxes between
+    # them: an agent sharing the channel bus would both feed and consume its own
+    # demux.  The default agent's bus is built here, ahead of the runtime, so the
+    # WebUI fallback-model observer lands on the same queue as the rest of that
+    # agent's outbound traffic and keeps its order.
     bus = MessageBus()
-    fallback_model_observer = build_webui_fallback_model_observer(bus)
+    default_bus = MessageBus()
+    fallback_model_observer = build_webui_fallback_model_observer(default_bus)
 
     def _observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
         snapshot.provider.set_llm_call_observer(record_llm_call)
@@ -438,7 +445,6 @@ def _run_gateway(
         except ValueError as exc:
             console.print(f"[red]Error: {exc}[/red]")
             raise typer.Exit(1) from exc
-    session_manager = SessionManager(config.workspace_path)
 
     # Use the same runtime identity for foreground and managed gateway processes.
     from nanobot.config.loader import get_config_path
@@ -459,49 +465,122 @@ def _run_gateway(
     if is_default_workspace(config.workspace_path):
         _migrate_cron_store(config)
 
-    # Create cron service with workspace-scoped store
+    # Cron is the default agent's alone.  Its store lives under the default
+    # workspace, and neither CronJob nor CronPayload carries an agent identity —
+    # a shared service would run a named agent's job against default.
+    # ``build_agent_runtime`` zeroes it for every named agent, so the tool is
+    # never even constructed for them; the same holds for the local trigger
+    # store, which is likewise rooted in the default workspace.
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
     trigger_store = LocalTriggerStore(config.workspace_path)
 
-    turn_delivery_factory = TurnDeliveryFactory(
-        bus,
-        route_policy=WebuiTurnRoutePolicy(session_manager),
-    )
+    def _agent_provider_snapshot_loader(name: str) -> Callable[..., ProviderSnapshot]:
+        """Return the loader that re-reads config and rebuilds *name*'s provider."""
+        if name == RESERVED_AGENT_NAME:
+            # Byte-identical to the single-agent gateway's loader.
+            return _load_gateway_provider_snapshot
 
-    tools = ToolRegistry()
-    mcp_provider = MCPProvider.from_config(config, tools)
+        def _load(
+            config_path: Path | None = None,
+            *,
+            preset_name: str | None = None,
+        ) -> ProviderSnapshot:
+            from nanobot.config.loader import load_config, resolve_config_env_vars
 
-    recovery = RecoveryCoordinator(
-        sessions=session_manager,
+            fresh = resolve_config_env_vars(
+                load_config(config_path),
+                config_path=config_path,
+            )
+            agent_config = resolve_agent_config(fresh, name).config
+            return _observe_provider(
+                build_provider_snapshot(agent_config, preset_name=preset_name)
+            )
+
+        return _load
+
+    def _initial_provider_snapshot(name: str, agent_config: Config) -> ProviderSnapshot:
+        """Resolve the provider *name* starts with, degrading rather than exiting."""
+        if name == RESERVED_AGENT_NAME:
+            return provider_snapshot
+        if unconfigured_provider_error is not None:
+            return _observe_provider(
+                build_unconfigured_provider_snapshot(
+                    agent_config, unconfigured_provider_error
+                )
+            )
+        try:
+            return _observe_provider(build_provider_snapshot(agent_config))
+        except ValueError as exc:
+            # A named agent with a broken model override must not take the whole
+            # gateway down; it reports the setup error like an unconfigured one.
+            logger.warning("Agent '{}': provider unavailable: {}", name, exc)
+            return _observe_provider(
+                build_unconfigured_provider_snapshot(agent_config, str(exc))
+            )
+
+    recoveries: dict[str, RecoveryCoordinator] = {}
+
+    def _build_gateway_agent(name: str) -> AgentRuntime:
+        """Build one isolated agent wired to its own bus, sessions and delivery.
+
+        Everything session-shaped is per-agent by construction: the turn delivery
+        factory and the recovery coordinator each take that agent's own store, and
+        ``AgentLoop`` rejects a delivery factory bound to a different bus.
+        """
+        is_default = name == RESERVED_AGENT_NAME
+        agent_config = resolve_agent_config(config, name).config
+        agent_bus = default_bus if is_default else MessageBus()
+        sessions = agent_session_manager(agent_config)
+        recoveries[name] = RecoveryCoordinator(
+            sessions=sessions,
+            bus=agent_bus,
+            unified_session=agent_config.agents.defaults.unified_session,
+        )
+        snapshot = _initial_provider_snapshot(name, agent_config)
+        return build_agent_runtime(
+            config,
+            name,
+            bus=agent_bus,
+            cron_service=cron,
+            session_manager=sessions,
+            provider=snapshot.provider,
+            model=snapshot.model,
+            context_window_tokens=snapshot.context_window_tokens,
+            provider_signature=snapshot.signature,
+            provider_snapshot_loader=_agent_provider_snapshot_loader(name),
+            preset_catalog_loader=load_model_preset_catalog,
+            image_generation_provider_configs=image_gen_provider_configs(agent_config),
+            turn_delivery_factory=TurnDeliveryFactory(
+                agent_bus,
+                route_policy=WebuiTurnRoutePolicy(sessions),
+            ),
+            local_trigger_store=trigger_store if is_default else None,
+            recovery_admission=recoveries[name],
+        )
+
+    runtime = MultiAgentRuntime(
+        config,
+        {name: _build_gateway_agent(name) for name in agent_names(config)},
         bus=bus,
-        unified_session=config.agents.defaults.unified_session,
     )
+    # Everything below still speaks to the default agent: cron, Dream, heartbeat,
+    # local triggers and the WebUI are all bound to it and to nothing else.
+    agent = runtime.default.loop
+    mcp_provider = runtime.default.mcp_provider
+    session_manager = runtime.default.sessions
+    recovery = recoveries[RESERVED_AGENT_NAME]
+    if len(runtime) > 1:
+        console.print(f"[green]✓[/green] Agents: {', '.join(runtime.names)}")
 
-    # Create agent with cron service
-    agent = AgentLoop.from_config(
-        config, bus,
-        provider=provider_snapshot.provider,
-        model=provider_snapshot.model,
-        context_window_tokens=provider_snapshot.context_window_tokens,
-        cron_service=cron,
-        session_manager=session_manager,
-        image_generation_provider_configs=image_gen_provider_configs(config),
-        provider_snapshot_loader=_load_gateway_provider_snapshot,
-        preset_catalog_loader=load_model_preset_catalog,
-        turn_delivery_factory=turn_delivery_factory,
-        provider_signature=provider_snapshot.signature,
-        local_trigger_store=trigger_store,
-        hooks=[_MCPReadinessHook(mcp_provider)],
-        hook_factories=[create_file_edit_activity_hook],
-        tool_registry=tools,
-        recovery_admission=recovery,
-    )
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 
+    # Runtime events are local bus publications, which the demux does not carry:
+    # they are only observable on the bus that emitted them.  The WebUI serves the
+    # default agent, so its coordinator subscribes to that agent's own bus.
     webui_turn_coordinator = WebuiTurnCoordinator(
-        bus=bus,
+        bus=default_bus,
         sessions=session_manager,
         schedule_background=_schedule_webui_background,
         recovery=recovery,
@@ -509,48 +588,59 @@ def _run_gateway(
     from nanobot.bus.events import OutboundMessage
     from nanobot.session.keys import session_key_for_channel
 
-    def _channel_session_key(channel: str, chat_id: str) -> str:
-        return session_key_for_channel(
-            channel,
-            chat_id,
-            unified_session=config.agents.defaults.unified_session,
-        )
+    def _channel_delivery_for(entry: AgentRuntime) -> Callable[..., Awaitable[None]]:
+        """Build *entry*'s proactive delivery path: its own bus and its own sessions."""
+        sessions = entry.sessions
+        unified_session = entry.config.agents.defaults.unified_session
 
-    async def _deliver_to_channel(
-        msg: OutboundMessage, *, record: bool = False, session_key: str | None = None,
-    ) -> None:
-        """Publish a user-visible message and mirror it into that channel's session."""
-        metadata = dict(msg.metadata or {})
-        record = record or bool(metadata.pop("_record_channel_delivery", False))
-        if metadata != (msg.metadata or {}):
-            msg = OutboundMessage(
-                channel=msg.channel,
-                chat_id=msg.chat_id,
-                content=msg.content,
-                reply_to=msg.reply_to,
-                media=msg.media,
-                metadata=metadata,
-                buttons=msg.buttons,
-            )
-        if (
-            record
-            and msg.channel != "cli"
-            and msg.content.strip()
-            and hasattr(session_manager, "get_or_create")
-            and hasattr(session_manager, "save")
-        ):
-            key = session_key or _channel_session_key(msg.channel, msg.chat_id)
-            session = session_manager.get_or_create(key)
-            extra: dict[str, Any] = {"_channel_delivery": True}
-            if msg.media:
-                extra["media"] = list(msg.media)
-            session.add_message("assistant", msg.content, **extra)
-            session_manager.save(session)
-        await bus.publish_outbound(msg)
+        async def _deliver_to_channel(
+            msg: OutboundMessage, *, record: bool = False, session_key: str | None = None,
+        ) -> None:
+            """Publish a user-visible message and mirror it into that channel's session."""
+            metadata = dict(msg.metadata or {})
+            record = record or bool(metadata.pop("_record_channel_delivery", False))
+            if metadata != (msg.metadata or {}):
+                msg = OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=msg.content,
+                    reply_to=msg.reply_to,
+                    media=msg.media,
+                    metadata=metadata,
+                    buttons=msg.buttons,
+                )
+            if (
+                record
+                and msg.channel != "cli"
+                and msg.content.strip()
+                and hasattr(sessions, "get_or_create")
+                and hasattr(sessions, "save")
+            ):
+                key = session_key or session_key_for_channel(
+                    msg.channel, msg.chat_id, unified_session=unified_session,
+                )
+                session = sessions.get_or_create(key)
+                extra: dict[str, Any] = {"_channel_delivery": True}
+                if msg.media:
+                    extra["media"] = list(msg.media)
+                session.add_message("assistant", msg.content, **extra)
+                sessions.save(session)
+            # This agent's own bus, not the channel bus: the outbound pump carries
+            # it from there, which keeps a tool-sent message ordered against the
+            # turn's own delivery instead of overtaking it.
+            await entry.bus.publish_outbound(msg)
 
+        return _deliver_to_channel
+
+    # Every agent can send proactively, each through its own bus and sessions.
+    # The default agent's is also the gateway's own delivery path, for heartbeat.
+    deliveries = {entry.name: _channel_delivery_for(entry) for entry in runtime}
+    for entry in runtime:
+        entry_message_tool = entry.loop.tools.get("message")
+        if isinstance(entry_message_tool, MessageTool):
+            entry_message_tool.set_send_callback(deliveries[entry.name])
+    _deliver_to_channel = deliveries[RESERVED_AGENT_NAME]
     message_tool = agent.tools.get("message")
-    if isinstance(message_tool, MessageTool):
-        message_tool.set_send_callback(_deliver_to_channel)
 
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | CronRunResult | None:
@@ -704,6 +794,16 @@ def _run_gateway(
 
     def _webui_refresh_runtime_config() -> None:
         agent.refresh_runtime_config()
+
+    def _invalidate_runtime_config() -> None:
+        """Re-read config lazily for every agent, and re-decide channel routing.
+
+        The config file is the single source of both, so a write that rebinds a
+        bot to another agent must not keep being routed by the old decision.
+        """
+        for entry in runtime:
+            entry.loop.invalidate_runtime_config()
+        runtime.invalidate_routing()
 
     def _webui_skill_state_action(disabled_skills: set[str]) -> None:
         config.agents.defaults.disabled_skills = sorted(disabled_skills)
@@ -909,17 +1009,14 @@ def _run_gateway(
         try:
             await cron.start()
             # Re-read once on first admission to close the watcher subscription window.
-            agent.runtime_resolver.invalidate()
+            for entry in runtime:
+                entry.loop.runtime_resolver.invalidate()
             # Recovery must finish before WebSocket and other channels begin
             # accepting new input.  That makes a new user message reliably
             # supersede an old recoverable turn instead of racing its queue.
-            await recovery.scan()
-            async def _run_agent() -> None:
-                try:
-                    await mcp_provider.connect()
-                    await agent.run()
-                finally:
-                    await mcp_provider.aclose()
+            # Each agent recovers from its own sessions onto its own bus.
+            for entry_recovery in recoveries.values():
+                await entry_recovery.scan()
 
             async def _monitor_local_clients() -> None:
                 orphaned = await monitor_gateway_clients(
@@ -933,11 +1030,13 @@ def _run_gateway(
                 asyncio.create_task(
                     watch_config_file(
                         Path(config_path),
-                        lambda: agent.invalidate_runtime_config(),
+                        _invalidate_runtime_config,
                     ),
                     name="nanobot-config-watcher",
                 ),
-                asyncio.create_task(_run_agent(), name="nanobot-agent-loop"),
+                # One task for every agent loop, the inbound demux and the
+                # outbound pumps; it also connects each agent's MCP servers.
+                asyncio.create_task(runtime.run(), name="nanobot-agent-runtime"),
                 asyncio.create_task(channels.start_all(), name="nanobot-channels"),
                 asyncio.create_task(
                     run_local_trigger_queue(
@@ -1004,8 +1103,10 @@ def _run_gateway(
                 # A gateway exit interrupts ownership of active turns; it is
                 # not the same as the user stopping a turn.  Keep checkpoints
                 # so the next gateway can offer an explicit Continue action.
-                agent.preserve_inflight_turns_on_shutdown()
-                agent.stop()
+                for entry in runtime:
+                    entry.loop.preserve_inflight_turns_on_shutdown()
+                # Stops every agent loop, the demux and every outbound pump.
+                runtime.stop()
                 # Cancel runtime tasks first, then deterministically close
                 # exec/MCP resources while the event loop is still alive.
                 await _close_gateway_runtime(
@@ -1014,12 +1115,18 @@ def _run_gateway(
                     channels,
                     tasks,
                     runtime_tasks,
+                    extra_closers=[
+                        (f"agent '{entry.name}'", entry.aclose)
+                        for entry in runtime
+                        if not entry.is_default
+                    ],
                 )
-                await bus.drain()
+                # Drains the channel bus and every agent's own bus.
+                await runtime.drain()
                 # Flush all cached sessions to durable storage before exit.
                 # This prevents data loss on filesystems with write-back
                 # caching (rclone VFS, NFS, FUSE mounts, etc.).
-                flushed = agent.sessions.flush_all()
+                flushed = runtime.flush_sessions()
                 if flushed:
                     logger.info("Shutdown: flushed {} session(s) to disk", flushed)
             finally:
