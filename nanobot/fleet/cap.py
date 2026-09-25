@@ -1,7 +1,7 @@
 """The memory cap: when a fleet instance's process tree has used too much.
 
-:mod:`nanobot.fleet.memory` answers "how many resident bytes does this process
-group hold?" and stops there. This module is the policy built on that number —
+:mod:`nanobot.fleet.memory` answers "how many resident bytes does this instance's
+process tree hold?" and stops there. This module is the policy built on that number —
 the threshold comparison, the timing rule that makes the threshold meaningful,
 and the record of which instances have already been caught. The split is
 deliberate: the sampler is hard because its ``ctypes`` struct offsets are
@@ -43,7 +43,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from nanobot.fleet.memory import process_group_memory_bytes
+from nanobot.fleet.memory import process_tree_memory_bytes
 
 #: Bytes in one megabyte, binary. ``memoryLimitMb`` is read the way every other
 #: memory limit an operator meets is read — ``ulimit``, container limits, the
@@ -64,9 +64,12 @@ KILL_DEADLINE_SECONDS = 5.0
 #: children and writes a state file needs.
 MAX_SAMPLE_INTERVAL_SECONDS = 1.0
 
-#: Takes a process group id, returns its tree's resident bytes, or ``None`` when
-#: the group cannot be sampled. Injectable so the policy can be driven over
-#: known numbers rather than by arranging real memory pressure.
+#: Takes an instance's process group id, returns its whole tree's resident
+#: bytes, or ``None`` when the tree cannot be sampled. The group id identifies
+#: the tree rather than bounding it — see
+#: :func:`nanobot.fleet.memory.process_tree_pids`, which reaches the descendants
+#: that left the group. Injectable so the policy can be driven over known
+#: numbers rather than by arranging real memory pressure.
 Sampler = Callable[[int], int | None]
 
 
@@ -116,14 +119,14 @@ class MemoryCap:
         self,
         limits: Mapping[str, int],
         *,
-        sample: Sampler = process_group_memory_bytes,
+        sample: Sampler = process_tree_memory_bytes,
     ) -> None:
         """Bind the declared limits to a way of measuring against them.
 
         Args:
             limits: instance name to ``memoryLimitMb``.
-            sample: how a process group's resident total is read. Defaults to
-                :func:`nanobot.fleet.memory.process_group_memory_bytes`.
+            sample: how a process tree's resident total is read. Defaults to
+                :func:`nanobot.fleet.memory.process_tree_memory_bytes`.
 
         Raises:
             ValueError: a limit is not positive. The fleet document already

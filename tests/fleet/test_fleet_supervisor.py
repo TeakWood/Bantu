@@ -26,6 +26,7 @@ import signal
 import stat
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from nanobot.fleet.instance import (
     LaunchedInstance,
     instance_log_path,
 )
+from nanobot.fleet.memory import process_group_pids, process_tree_pids
 from nanobot.fleet.profile import SeatbeltProfileError, build_fleet_profiles
 from nanobot.fleet.state import (
     STATE_FILE_MODE,
@@ -55,9 +57,11 @@ from nanobot.fleet.supervisor import (
     exit_reason_for,
     prepare_fleet,
     run_fleet,
+    signal_instance_tree,
     start_fleet,
 )
 from nanobot.fleet.validate import ResolvedInstance
+from nanobot.process_runtime import process_is_running
 
 confinement_available = pytest.mark.skipif(
     sys.platform != "darwin" or not Path(SANDBOX_EXEC).is_file(),
@@ -873,6 +877,30 @@ def test_a_group_that_refuses_the_signal_falls_back_to_the_instance_pid(
     assert signals.pids == [(pid, signal.SIGTERM), (pid, signal.SIGKILL)]
 
 
+def test_a_tree_that_cannot_be_walked_still_gets_the_group_signal(tmp_path) -> None:
+    """An unreadable tree must not turn a kill into no kill at all.
+
+    The descendant walk is a ``ctypes`` call into ``libproc`` and can fail for
+    reasons the instance has nothing to do with. Signalling the group is still
+    the largest correct thing to do; withholding it would leave the instance and
+    the tree alive because the supervisor could not enumerate the tree.
+    """
+    launcher = StubLauncher()
+    timing = FakeTime()
+    supervisor, _, _ = start_stubbed(
+        tmp_path.resolve(), "a", launcher=launcher, timing=timing
+    )
+    signals = RecordingSignals(launcher, dies_on=signal.SIGTERM, returncode=-15)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(supervisor_module, "process_tree_pids", lambda _pgid: None)
+        signals.install(patch)
+        supervisor.shutdown(grace=1.0)
+
+    assert signals.groups == [(launcher.launched["a"].pgid, signal.SIGTERM)]
+    assert signals.pids == []
+
+
 def test_a_stop_request_ends_the_loop_and_takes_the_fleet_with_it(tmp_path) -> None:
     """A foreground supervisor that returned alone would orphan its instances."""
     launcher = StubLauncher()
@@ -1089,3 +1117,73 @@ def test_killing_one_real_instance_leaves_its_peer_serving(tmp_path) -> None:
 
     assert state_of(plan)["b"][0] == "exited"
     assert [one.state for one in supervisor.records] == ["exited", "exited"]
+
+
+# A stub that starts a descendant in a session of its own, which is what nanobot's
+# shell tool does to every command it runs (``agent/tools/shell.py`` spawns with
+# ``start_new_session=True`` so it can kill a runaway command by group). The
+# descendant is therefore out of the instance's process group from its first
+# instruction, and a group-directed signal never reaches it.
+STRAY_STUB = """#!/bin/sh
+config="$5"
+[ "$4" = "--config" ] && [ -f "$config" ] || exit 64
+workspace="$(dirname "$config")/workspace"
+__PYTHON__ -c 'import os, sys, time
+os.setsid()
+with open(sys.argv[1], "w") as handle:
+    handle.write(str(os.getpid()))
+time.sleep(600)' "$workspace/stray.pid" &
+sleep 600
+"""
+
+
+def write_stray_stub(path: Path, python_executable: str) -> Path:
+    """Write the stub with the interpreter baked in — ``env -i`` strips little.
+
+    The path is absolute because the descendant must be started the same way on
+    any host, not found through whatever ``PATH`` the minimal environment carries.
+    """
+    path.write_text(STRAY_STUB.replace("__PYTHON__", python_executable), encoding="utf-8")
+    path.chmod(0o700)
+    return path
+
+
+@confinement_available
+def test_signalling_a_tree_reaches_the_descendants_that_left_the_group(tmp_path) -> None:
+    """The group is not the tree, and the difference is where the memory goes.
+
+    An instance's shell tool starts every command in a new session, so the
+    process a memory cap fires at is never in the instance's process group by the
+    time it has allocated anything. A group-only ``SIGKILL`` would report the
+    instance as killed and leave the allocation running, reparented and owned by
+    nobody — the fleet would look tidy and the machine would not recover.
+    """
+    root = tmp_path.resolve()
+    fleet_path, instances = make_fleet(root, "a")
+    plan = prepare_fleet(instances, fleet_path=fleet_path)
+    stub = write_stray_stub(root / "stub.sh", sys.executable)
+    stray_path = instances[0].workspace / "stray.pid"
+    stray_pid = 0
+
+    supervisor = start_fleet(plan, python_executable=str(stub))
+    try:
+        wait_until(lambda: stray_path.exists(), "the instance started a descendant")
+        stray_pid = int(stray_path.read_text(encoding="utf-8").strip())
+        launched = supervisor.launched("a")
+
+        # The premise, checked rather than assumed: this descendant is genuinely
+        # unreachable by a signal to the instance's group.
+        assert os.getpgid(stray_pid) != launched.pgid
+        assert stray_pid not in (process_group_pids(launched.pgid) or [])
+        assert stray_pid in (process_tree_pids(launched.pgid) or [])
+
+        signal_instance_tree(launched, signal.SIGKILL)
+
+        wait_until(lambda: not process_is_running(stray_pid), "the descendant was killed")
+        wait_until(lambda: any(supervisor.tick()), "the supervisor observed the kill")
+        assert state_of(plan) == {"a": ("exited", "signal")}
+    finally:
+        supervisor.shutdown()
+        if stray_pid:
+            with suppress(ProcessLookupError, PermissionError):
+                os.kill(stray_pid, signal.SIGKILL)

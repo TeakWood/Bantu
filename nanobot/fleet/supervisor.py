@@ -72,7 +72,11 @@ from nanobot.fleet.instance import (
     ensure_instance_directories,
     launch_instance,
 )
-from nanobot.fleet.memory import process_group_memory_bytes
+from nanobot.fleet.memory import (
+    process_group_pids,
+    process_tree_memory_bytes,
+    process_tree_pids,
+)
 from nanobot.fleet.profile import build_fleet_profiles
 from nanobot.fleet.state import (
     EXIT_REASONS,
@@ -224,7 +228,7 @@ def start_fleet(
     sleep: Sleep = time.sleep,
     clock: Clock = time.monotonic,
     on_state_error: StateErrorHandler | None = None,
-    sample_memory: Sampler = process_group_memory_bytes,
+    sample_memory: Sampler = process_tree_memory_bytes,
 ) -> FleetSupervisor:
     """Launch every instance in ``plan`` and return the supervisor watching them.
 
@@ -297,7 +301,7 @@ def run_fleet(
     python_executable: str | None = None,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
     handle_signals: bool = True,
-    sample_memory: Sampler = process_group_memory_bytes,
+    sample_memory: Sampler = process_tree_memory_bytes,
 ) -> tuple[InstanceRecord, ...]:
     """Prepare, start and supervise a validated fleet in the foreground.
 
@@ -339,7 +343,7 @@ class FleetSupervisor:
         sleep: Sleep = time.sleep,
         clock: Clock = time.monotonic,
         on_state_error: StateErrorHandler | None = None,
-        sample_memory: Sampler = process_group_memory_bytes,
+        sample_memory: Sampler = process_tree_memory_bytes,
     ) -> None:
         """Bind a plan to the processes started from it.
 
@@ -357,9 +361,10 @@ class FleetSupervisor:
                 raised out of the loop — see :meth:`tick` — so this is the only
                 way it becomes visible; without it the error is available on
                 :attr:`state_error` and nowhere else.
-            sample_memory: how an instance's process group is measured against
-                its cap. Injectable so the policy can be driven over known
-                numbers instead of by arranging real memory pressure.
+            sample_memory: how an instance's process tree is measured against
+                its cap, keyed by its process group id. Injectable so the policy
+                can be driven over known numbers instead of by arranging real
+                memory pressure.
 
         Raises:
             ValueError: the interval is out of range, some instance declares a
@@ -540,10 +545,11 @@ class FleetSupervisor:
         instance to stop; it is the one case where the instance has already
         proved it cannot be trusted with the machine, and a graceful signal can
         be caught, delayed, or ignored by exactly the runaway allocation the cap
-        exists to stop. To the whole process group, not the instance pid, because
-        the allocation is typically in a child the instance's shell tool
-        started — which is why the metric is defined over the tree in the first
-        place.
+        exists to stop. To the whole tree, not the instance pid, because the
+        allocation is typically in a child the instance's shell tool started —
+        which is why the metric is defined over the tree in the first place, and
+        why :func:`signal_instance_tree` has to reach past the process group that
+        child has already left.
 
         The reason is declared *before* the signal. The exit can be observed on
         this very sweep, so a reason patched on afterwards would race the write
@@ -753,28 +759,59 @@ class FleetSupervisor:
 
 
 def signal_instance_tree(launched: LaunchedInstance, sig: int) -> None:
-    """Send ``sig`` to an instance's whole process group.
+    """Send ``sig`` to an instance's whole process tree.
+
+    The process group first, in one call, and then every descendant the group
+    does not contain. Those exist in the ordinary course of an instance doing its
+    job: nanobot's shell tool starts each command with ``start_new_session`` so
+    that it can kill a runaway command by group, which moves that command out of
+    the instance's group the moment it starts. A group-only signal would leave
+    exactly the process the memory cap fired at still holding its allocation,
+    now reparented and owned by nobody.
+
+    The tree is enumerated *before* anything is signalled. Once the group leader
+    dies its children are reparented away, and a walk done afterwards would find
+    nothing to kill.
 
     Falls back to the instance pid alone if the recorded group is the
     supervisor's own. That guard is not defensive padding: the group is the
     instance's tree only because it was spawned with ``start_new_session``, and
     if that were ever dropped the child would join the supervisor's group and a
     group-directed signal would kill the supervisor and every other instance with
-    it. The failure would present as the fleet vanishing rather than as an error.
+    it — and the descendant walk would sweep up every peer for good measure. The
+    failure would present as the fleet vanishing rather than as an error.
 
     Already-dead targets are ignored: reaping is :meth:`FleetSupervisor.reap`'s
     job, and a race between the two is expected rather than exceptional.
     """
     killpg = getattr(os, "killpg", None)
     if killpg is not None and launched.pgid > 0 and launched.pgid != _own_process_group():
+        strays = _strays(launched.pgid)
         try:
             killpg(launched.pgid, sig)
         except OSError:
             pass
         else:
+            for pid in strays:
+                with suppress(OSError):
+                    os.kill(pid, sig)
             return
     with suppress(OSError):
         os.kill(launched.pid, sig)
+
+
+def _strays(process_group: int) -> tuple[int, ...]:
+    """The tree members a signal to ``process_group`` would not reach.
+
+    Computed by difference rather than by signalling everything individually so
+    that the common case stays one syscall, and so a group member that appears
+    after the walk is still covered by the group signal.
+    """
+    tree = process_tree_pids(process_group)
+    if tree is None:
+        return ()
+    members = set(process_group_pids(process_group) or ())
+    return tuple(pid for pid in tree if pid > 0 and pid not in members)
 
 
 def _own_process_group() -> int | None:
