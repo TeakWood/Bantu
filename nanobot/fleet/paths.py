@@ -75,28 +75,30 @@ class InstancePaths(NamedTuple):
     workspace: Path
 
 
-def resolve_instance_paths(config_path: str | Path) -> InstancePaths:
-    """Resolve ``config_path`` to its ``(config_dir, workspace)`` pair.
+class InstanceConfig(NamedTuple):
+    """One instance's config file: where it is, and what it says.
 
-    Creates nothing: the workspace commonly does not exist yet, and a fleet that
-    fails validation must leave no directories behind.
+    ``path`` is expanded but deliberately *not* resolved, because the config
+    dir is derived from the parent as written — see :func:`instance_paths`.
+    """
 
-    ``config_dir`` is the parent of the config file, matching how nanobot itself
-    derives an instance's data dir (``get_data_dir`` is ``get_config_path()``'s
-    parent). The parent as *written* is what nanobot will use, so that is what
-    gets canonicalised — resolving the config file itself first would relocate
-    the data dir whenever the file is a symlink into a shared directory.
+    path: Path
+    data: Mapping[str, object]
 
-    Both results are run through ``expanduser()`` then ``resolve(strict=False)``,
-    so a relative input — either ``config_path`` or a relative
-    ``agents.defaults.workspace`` — becomes absolute against the current working
-    directory. The fleet's validation layer refuses relative paths declared in a
-    fleet document before they reach here; this function is deliberately not the
-    place that decision is made.
+
+def read_instance_config(config_path: str | Path) -> InstanceConfig:
+    """Read one instance config file into memory, without interpreting it.
+
+    Split out of :func:`resolve_instance_paths` for the same reason
+    ``nanobot.fleet.config`` splits ``load_fleet_file`` from ``parse_fleet_file``:
+    the fleet's validation layer needs more out of a config file than the two
+    directories — the raw workspace value, so it can tell a relative declaration
+    from an absolute one, and the declared ports — and reading a
+    confinement-critical file twice would let the two reads disagree.
 
     Raises:
-        FleetPathError: the file is missing, unreadable, not JSON, not a JSON
-            object, or declares a workspace that is not a non-empty string.
+        FleetPathError: the file is missing, is not a file, is unreadable, is
+            not valid UTF-8, is not JSON, or is not a JSON object.
     """
     path = Path(config_path).expanduser()
     if not path.exists():
@@ -106,11 +108,62 @@ def resolve_instance_paths(config_path: str | Path) -> InstancePaths:
         raise FleetPathError(path, "instance config file does not exist")
     if not path.is_file():
         raise FleetPathError(path, "instance config path is not a file")
-    data = _config_object(path)
+    return InstanceConfig(path=path, data=_config_object(path))
+
+
+def instance_paths(config: InstanceConfig) -> InstancePaths:
+    """Derive the ``(config_dir, workspace)`` pair from an already-read config.
+
+    Creates nothing — the workspace commonly does not exist yet, and a fleet that
+    fails validation must leave no directories behind — and never re-opens the
+    config file; canonicalising does stat the paths, because that is what
+    following a symlink means.
+
+    ``config_dir`` is the parent of the config file, matching how nanobot itself
+    derives an instance's data dir (``get_data_dir`` is ``get_config_path()``'s
+    parent). The parent as *written* is what nanobot will use, so that is what
+    gets canonicalised — resolving the config file itself first would relocate
+    the data dir whenever the file is a symlink into a shared directory.
+
+    Both results are run through ``expanduser()`` then ``resolve(strict=False)``,
+    so a relative input — either the config path or a relative
+    ``agents.defaults.workspace`` — becomes absolute against the current working
+    directory. ``nanobot.fleet.validate`` refuses relative paths declared in a
+    fleet document before they reach here; this function is deliberately not the
+    place that decision is made.
+
+    Raises:
+        FleetPathError: the config declares a workspace that is not a non-empty
+            string.
+    """
     return InstancePaths(
-        config_dir=_canonical(path.parent),
-        workspace=_canonical(Path(_workspace_value(path, data))),
+        config_dir=_canonical(config.path.parent),
+        workspace=_canonical(Path(declared_workspace(config))),
     )
+
+
+def declared_workspace(config: InstanceConfig) -> str:
+    """Return ``agents.defaults.workspace`` exactly as written, or the default.
+
+    The *raw* value, before expansion or resolution, because that is the only
+    form in which "the operator declared a relative workspace" is still visible;
+    :func:`instance_paths` has already turned it into something absolute.
+
+    Raises:
+        FleetPathError: the key is present but is not a non-empty string, or a
+            section on the way to it is not a JSON object.
+    """
+    return _workspace_value(config.path, config.data)
+
+
+def resolve_instance_paths(config_path: str | Path) -> InstancePaths:
+    """Resolve ``config_path`` to its canonical ``(config_dir, workspace)`` pair.
+
+    Raises:
+        FleetPathError: the file is missing, unreadable, not JSON, not a JSON
+            object, or declares a workspace that is not a non-empty string.
+    """
+    return instance_paths(read_instance_config(config_path))
 
 
 def _canonical(path: Path) -> Path:

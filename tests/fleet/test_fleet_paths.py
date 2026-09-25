@@ -19,7 +19,11 @@ import pytest
 from nanobot.fleet.paths import (
     DEFAULT_WORKSPACE,
     FleetPathError,
+    InstanceConfig,
     InstancePaths,
+    declared_workspace,
+    instance_paths,
+    read_instance_config,
     resolve_instance_paths,
 )
 
@@ -342,3 +346,78 @@ def test_a_config_file_that_is_not_utf8_raises(tmp_path: Path) -> None:
 
     with pytest.raises(FleetPathError, match="not valid UTF-8"):
         resolve_instance_paths(config)
+
+
+# ---------------------------------------------------------------------------
+# The read/derive split
+#
+# ``nanobot.fleet.validate`` needs more out of a config file than the two
+# directories — the raw workspace value and the declared ports — and reading a
+# confinement-critical file twice would let the two reads disagree.
+# ---------------------------------------------------------------------------
+
+
+def test_reading_and_deriving_compose_into_resolve(tmp_path: Path) -> None:
+    config = config_with_workspace(tmp_path / "instance-a", str(tmp_path / "ws"))
+
+    assert instance_paths(read_instance_config(config)) == resolve_instance_paths(config)
+
+
+def test_read_instance_config_returns_the_document_and_the_unresolved_path(
+    tmp_path: Path,
+) -> None:
+    """The path is expanded but not resolved: the config dir comes from the
+    parent *as written*, so resolving the file here would relocate it."""
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "target.json").write_text(json.dumps({"x": 1}), encoding="utf-8")
+    instance = tmp_path / "instance-a"
+    instance.mkdir()
+    (instance / "config.json").symlink_to(real / "target.json")
+
+    config = read_instance_config(instance / "config.json")
+
+    assert isinstance(config, InstanceConfig)
+    assert config.path == instance / "config.json"
+    assert config.data == {"x": 1}
+
+
+def test_declared_workspace_returns_the_value_as_written(tmp_path: Path) -> None:
+    """Raw, because "the operator declared a relative workspace" is only visible
+    before expansion — and that is the refusal ``validate`` has to make."""
+    config = read_instance_config(config_with_workspace(tmp_path / "instance-a", "./ws"))
+
+    assert declared_workspace(config) == "./ws"
+
+
+def test_declared_workspace_falls_back_to_the_schema_default(tmp_path: Path) -> None:
+    config = read_instance_config(write_config(tmp_path / "instance-a", {}))
+
+    assert declared_workspace(config) == DEFAULT_WORKSPACE
+
+
+def test_declared_workspace_raises_on_an_unusable_value(tmp_path: Path) -> None:
+    config = read_instance_config(config_with_workspace(tmp_path / "instance-a", ""))
+
+    with pytest.raises(FleetPathError, match="workspace must be a non-empty string"):
+        declared_workspace(config)
+
+
+def test_deriving_paths_never_re_reads_the_config_file(tmp_path: Path) -> None:
+    """The one read is the one that counts.
+
+    Proved by deleting the file: ``instance_paths`` and ``declared_workspace``
+    still work, so ``validate`` cannot get a workspace from one read of a
+    confinement-critical file and a port from a different one. (Both still
+    canonicalise, which stats the path — they create nothing, they just do not
+    re-open the document.)
+    """
+    instance = tmp_path / "instance-a"
+    config = read_instance_config(config_with_workspace(instance, str(tmp_path / "ws")))
+    (instance / "config.json").unlink()
+
+    assert declared_workspace(config) == str(tmp_path / "ws")
+    assert instance_paths(config) == InstancePaths(
+        config_dir=instance.resolve(),
+        workspace=(tmp_path / "ws").resolve(),
+    )
