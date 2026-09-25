@@ -35,11 +35,19 @@ problem into an outage.
 
 *Exit reasons are only the ones the supervisor is in a position to observe.*
 ``"signal"`` when the child was terminated by a signal and ``"exit"`` for an
-ordinary exit — that is the whole vocabulary here. ``"memory"`` is a claim about
-*why* a signal was sent, which only the component that sent it can make, so
-:mod:`nanobot.fleet.memory`'s policy layer declares it through
+ordinary exit — that is the whole vocabulary the reaper has. ``"memory"`` is a
+claim about *why* a signal was sent, which only the component that sent it can
+make, so :meth:`FleetSupervisor.enforce_memory_caps` declares it through
 :meth:`FleetSupervisor.record_exit_reason` before it kills the tree, and the
 reaper prefers that declaration over the bare fact that a signal arrived.
+
+*The memory cap rides on the same tick.* :mod:`nanobot.fleet.cap` decides
+whether a tree is over its limit and this module does the killing, because
+signalling a tree means addressing its process group — which lives on the owned
+handle, together with the guard that keeps a mis-spawned instance's group from
+resolving to the supervisor's own. That is also why the tick may not be coarser
+than :data:`~nanobot.fleet.cap.MAX_SAMPLE_INTERVAL_SECONDS`: the cap's deadline
+is spent almost entirely on waiting for the next sample.
 """
 
 from __future__ import annotations
@@ -52,12 +60,19 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from nanobot.fleet.cap import (
+    MAX_SAMPLE_INTERVAL_SECONDS,
+    CapBreach,
+    MemoryCap,
+    Sampler,
+)
 from nanobot.fleet.instance import (
     InstanceLaunchError,
     LaunchedInstance,
     ensure_instance_directories,
     launch_instance,
 )
+from nanobot.fleet.memory import process_group_memory_bytes
 from nanobot.fleet.profile import build_fleet_profiles
 from nanobot.fleet.state import (
     EXIT_REASONS,
@@ -77,10 +92,13 @@ from nanobot.process_runtime import process_is_running
 #: crossing its limit; a coarser interval would spend that budget on sleeping.
 DEFAULT_POLL_INTERVAL_SECONDS = 0.5
 
-#: The coarsest interval the supervisor will accept, for the reason above. A
-#: constructor-time refusal rather than a comment, so the cap policy cannot be
-#: handed a supervisor that samples too slowly to honour its own deadline.
-MAX_POLL_INTERVAL_SECONDS = 1.0
+#: The coarsest interval the supervisor will accept, for the reason above. Owned
+#: by :mod:`nanobot.fleet.cap`, which is where the deadline it derives from
+#: lives; re-exported under this module's name because the tick it bounds is
+#: this module's. A constructor-time refusal rather than a comment, so the cap
+#: policy cannot be handed a supervisor that samples too slowly to honour its
+#: own deadline.
+MAX_POLL_INTERVAL_SECONDS = MAX_SAMPLE_INTERVAL_SECONDS
 
 #: How long a still-running instance is given to leave after ``SIGTERM`` before
 #: the supervisor escalates to ``SIGKILL`` on its own way out.
@@ -206,6 +224,7 @@ def start_fleet(
     sleep: Sleep = time.sleep,
     clock: Clock = time.monotonic,
     on_state_error: StateErrorHandler | None = None,
+    sample_memory: Sampler = process_group_memory_bytes,
 ) -> FleetSupervisor:
     """Launch every instance in ``plan`` and return the supervisor watching them.
 
@@ -229,6 +248,7 @@ def start_fleet(
         sleep: see :class:`FleetSupervisor`.
         clock: see :class:`FleetSupervisor`.
         on_state_error: see :class:`FleetSupervisor`.
+        sample_memory: see :class:`FleetSupervisor`.
 
     Raises:
         InstanceLaunchError: an instance has no profile in ``plan``, or its
@@ -263,6 +283,7 @@ def start_fleet(
         sleep=sleep,
         clock=clock,
         on_state_error=on_state_error,
+        sample_memory=sample_memory,
     )
     write_fleet_state(supervisor.records, path=plan.state_path)
     return supervisor
@@ -276,6 +297,7 @@ def run_fleet(
     python_executable: str | None = None,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
     handle_signals: bool = True,
+    sample_memory: Sampler = process_group_memory_bytes,
 ) -> tuple[InstanceRecord, ...]:
     """Prepare, start and supervise a validated fleet in the foreground.
 
@@ -292,6 +314,7 @@ def run_fleet(
         launch=launch,
         python_executable=python_executable,
         poll_interval=poll_interval,
+        sample_memory=sample_memory,
     )
     return supervisor.run(handle_signals=handle_signals)
 
@@ -316,6 +339,7 @@ class FleetSupervisor:
         sleep: Sleep = time.sleep,
         clock: Clock = time.monotonic,
         on_state_error: StateErrorHandler | None = None,
+        sample_memory: Sampler = process_group_memory_bytes,
     ) -> None:
         """Bind a plan to the processes started from it.
 
@@ -333,10 +357,14 @@ class FleetSupervisor:
                 raised out of the loop — see :meth:`tick` — so this is the only
                 way it becomes visible; without it the error is available on
                 :attr:`state_error` and nowhere else.
+            sample_memory: how an instance's process group is measured against
+                its cap. Injectable so the policy can be driven over known
+                numbers instead of by arranging real memory pressure.
 
         Raises:
-            ValueError: the interval is out of range, or the launched processes
-                do not correspond one-to-one with the plan's instances.
+            ValueError: the interval is out of range, some instance declares a
+                non-positive memory limit, or the launched processes do not
+                correspond one-to-one with the plan's instances.
         """
         if not 0 < poll_interval <= MAX_POLL_INTERVAL_SECONDS:
             raise ValueError(
@@ -354,6 +382,11 @@ class FleetSupervisor:
         self._stop_requested = False
         self._state_dirty = False
         self._pending_reasons: dict[str, ExitReason] = {}
+        self._breaches: dict[str, CapBreach] = {}
+        self.memory_cap = MemoryCap(
+            {one.name: one.entry.memory_limit_mb for one in plan.instances},
+            sample=sample_memory,
+        )
 
         by_name = {one.name: one for one in launched}
         expected = [instance.name for instance in plan.instances]
@@ -399,6 +432,22 @@ class FleetSupervisor:
     def stop_requested(self) -> bool:
         """Whether a stop has been asked for by a signal or by a caller."""
         return self._stop_requested
+
+    @property
+    def breaches(self) -> tuple[CapBreach, ...]:
+        """Every instance caught over its memory cap, in fleet order.
+
+        Kept after the instance has been killed and reaped, for the same reason
+        exited records are kept: the reading that ended an instance is what an
+        operator needs in order to decide whether the cap or the workload is
+        wrong, and it is not recoverable from the state file, which publishes
+        only the reason.
+        """
+        return tuple(
+            self._breaches[one.name]
+            for one in self.plan.instances
+            if one.name in self._breaches
+        )
 
     def launched(self, name: str) -> LaunchedInstance:
         """The live handle for ``name``.
@@ -479,6 +528,73 @@ class FleetSupervisor:
             )
         return tuple(exits)
 
+    def enforce_memory_caps(self) -> tuple[CapBreach, ...]:
+        """Sample every running instance's tree and kill the ones over their cap.
+
+        The sampling side of the fleet's memory limit, run once per :meth:`tick`
+        so that the interval between two samples is the poll interval — which is
+        what the constructor bounds, and what makes the spec's five-second kill
+        deadline reachable at all.
+
+        ``SIGKILL`` rather than ``SIGTERM``. This is not the operator asking an
+        instance to stop; it is the one case where the instance has already
+        proved it cannot be trusted with the machine, and a graceful signal can
+        be caught, delayed, or ignored by exactly the runaway allocation the cap
+        exists to stop. To the whole process group, not the instance pid, because
+        the allocation is typically in a child the instance's shell tool
+        started — which is why the metric is defined over the tree in the first
+        place.
+
+        The reason is declared *before* the signal. The exit can be observed on
+        this very sweep, so a reason patched on afterwards would race the write
+        that publishes it and the instance would be reported as having died of
+        an ordinary signal.
+
+        An instance already caught is not sampled again, but it *is* signalled
+        again: re-sampling could find a tree that had fallen back under its cap
+        while it was being killed and reprieve an instance whose ``"memory"``
+        reason is already pending, whereas a second ``SIGKILL`` is one idempotent
+        syscall that covers a first delivery racing a process joining the group.
+
+        An instance whose recorded group is the supervisor's own is skipped
+        outright, the same refusal :func:`signal_instance_tree` makes for the
+        same reason. The group is the instance's tree only because it was
+        spawned with ``start_new_session``; if that were ever dropped, every
+        instance would sample the supervisor's entire world — itself, the
+        supervisor, and every peer — and each would breach its own cap on the
+        first tick. The fleet would then be killed off one pid at a time and the
+        whole thing recorded as a memory problem. Not enforcing a cap the
+        supervisor cannot attribute is the only safe reading.
+
+        Skipped entirely once a stop has been requested. The fleet is already
+        coming down by the operator's decision, and attributing that to a memory
+        cap would misreport why it stopped.
+
+        Returns:
+            The breaches found on this sweep — newly caught instances only, in
+            fleet order. Empty in the common case.
+        """
+        if self._stop_requested:
+            return ()
+        own_group = _own_process_group()
+        found: list[CapBreach] = []
+        for name, launched in self._launched.items():
+            if self._records[name].state == "exited":
+                continue
+            if launched.pgid <= 0 or launched.pgid == own_group:
+                continue
+            if name in self._breaches:
+                signal_instance_tree(launched, signal.SIGKILL)
+                continue
+            breach = self.memory_cap.breach(name, launched.pgid)
+            if breach is None:
+                continue
+            self._breaches[name] = breach
+            self.record_exit_reason(name, "memory")
+            signal_instance_tree(launched, signal.SIGKILL)
+            found.append(breach)
+        return tuple(found)
+
     def write_state(self) -> bool:
         """Publish the current records to the state file.
 
@@ -499,14 +615,19 @@ class FleetSupervisor:
         return True
 
     def tick(self) -> tuple[InstanceExit, ...]:
-        """One sweep: reap, then publish if anything changed.
+        """One sweep: enforce the memory caps, reap, then publish any change.
 
-        The unit :meth:`run` repeats, and the one the memory cap will extend. A
-        failed write keeps the records dirty and is retried here on the next
+        The unit :meth:`run` repeats. Enforcement runs first so that a tree
+        killed on this sweep can be reaped on it too rather than waiting a whole
+        interval — the cap's deadline is measured from the crossing, and every
+        tick spent not noticing is spent out of it.
+
+        A failed write keeps the records dirty and is retried here on the next
         sweep instead of propagating: the supervisor's bookkeeping failing is a
         reason to keep trying to report, not a reason to abandon a fleet that is
         serving correctly.
         """
+        self.enforce_memory_caps()
         exits = self.reap()
         if self._state_dirty:
             self.write_state()
@@ -572,9 +693,16 @@ class FleetSupervisor:
         different tool: a separate process with no handles, working from the pids
         in the state file.
 
+        Marks the fleet as stopping before it sweeps. A shutdown *is* a stop,
+        whoever asked for it, and the flag is what keeps the memory cap from
+        running over instances that are already being taken down — every sweep
+        in the grace period would otherwise re-sample them, and one that found a
+        tree over its cap would record the operator's stop as a memory kill.
+
         Returns:
             Every instance's final record, in fleet order.
         """
+        self._stop_requested = True
         self.tick()
         for escalation in (signal.SIGTERM, signal.SIGKILL):
             if not self.running:
