@@ -51,6 +51,17 @@ _PROC_TASKINFO_SIZE = 96
 # ``pti_resident_size`` is the second uint64, right after ``pti_virtual_size``.
 _PTI_RESIDENT_SIZE_OFFSET = 8
 
+# ``proc_pidinfo`` flavor for ``struct proc_bsdinfo`` (``sys/proc_info.h``).
+_PROC_PIDTBSDINFO = 3
+# ``sizeof(struct proc_bsdinfo)``: twelve uint32, then MAXCOMLEN (16) and
+# 2*MAXCOMLEN (32) bytes of names, then five uint32, an int32, then two uint64.
+_PROC_BSDINFO_SIZE = 136
+# ``pbi_pid`` is the fourth uint32 and ``pbi_ppid`` the fifth, so they sit at 12
+# and 16. The pid is read only so it can be compared with the one asked for —
+# see :func:`process_parent_pid`.
+_PBI_PID_OFFSET = 12
+_PBI_PPID_OFFSET = 16
+
 # ``proc_listpgrppids`` cannot report how many members a group has without
 # writing them somewhere, so we start with a generous buffer and grow when the
 # result saturates. The ceiling only exists so a hostile or pathological group
@@ -145,6 +156,45 @@ def process_child_pids(pid: int) -> list[int] | None:
             continue
         return [int(child) for child in buffer[:written] if child > 0]
     return None
+
+
+def process_parent_pid(pid: int) -> int | None:
+    """Return ``pid``'s parent process id, or ``None`` if it cannot be read.
+
+    The inverse of :func:`process_child_pids`, and the only way a process that
+    did not spawn the fleet can find the supervisor watching it: the state file
+    records each instance's pid but deliberately says nothing about the
+    supervisor, so ``nanobot fleet stop`` recovers it by asking an instance who
+    its parent is. That answer has to be taken *before* the instance is
+    signalled — an orphaned child is reparented to ``launchd``, and the link back
+    to the supervisor is gone the moment it dies.
+
+    ``None`` covers an unsupported platform, a pid that has already exited, and a
+    process this user may not inspect. A parent of ``1`` is returned as-is rather
+    than filtered: "reparented to ``launchd``" is a real and useful answer, and
+    deciding what to do with it belongs to the caller.
+
+    The pid the kernel reports is compared with the one that was asked for. That
+    is the only guard available against the hard-coded struct offsets drifting
+    from a future kernel's layout, and it fails closed: a mismatch means the
+    field at :data:`_PBI_PPID_OFFSET` is not a ppid, and returning it would aim a
+    later signal at an arbitrary process.
+    """
+    handles = _darwin_libproc()
+    if handles is None or pid <= 0:
+        return None
+    proc_pidinfo, _ = handles
+    buffer = ctypes.create_string_buffer(_PROC_BSDINFO_SIZE)
+    try:
+        written = proc_pidinfo(pid, _PROC_PIDTBSDINFO, 0, buffer, len(buffer))
+    except (OSError, ValueError):
+        return None
+    if written != len(buffer):
+        return None
+    if int(struct.unpack_from("=I", buffer, _PBI_PID_OFFSET)[0]) != pid:
+        return None
+    parent = int(struct.unpack_from("=I", buffer, _PBI_PPID_OFFSET)[0])
+    return parent if parent > 0 else None
 
 
 def process_descendant_pids(pid: int) -> list[int] | None:

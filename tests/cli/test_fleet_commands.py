@@ -1,6 +1,6 @@
-"""Tests for ``nanobot fleet start``.
+"""Tests for ``nanobot fleet start`` and ``nanobot fleet stop``.
 
-The command's whole contribution is an ordering — validate, prepare, prove, only
+``start``'s whole contribution is an ordering — validate, prepare, prove, only
 then start — so these tests are mostly about what did *not* happen. Each of the
 three gates is failed in turn and the assertion is that the next stage was never
 reached and that no instance process exists, which is the acceptance criterion
@@ -13,6 +13,12 @@ stand-in. The two things that are not — proving confinement, which needs a ker
 with Seatbelt, and the foreground loop, which needs real children — are injected,
 so the command's decision logic is tested on every platform instead of skipping
 on most of them.
+
+``stop``'s tests are the other way round: the termination policy has its own
+suite in ``tests/fleet/test_fleet_stop.py``, driven over real and faked process
+tables, so what is left here is the command's own three decisions — where the
+state file is, that the fleet document is never consulted, and that a survivor
+is never reported as a successful stop.
 """
 
 from __future__ import annotations
@@ -32,7 +38,8 @@ from nanobot.cli.process_identity import set_cli_process_identity
 from nanobot.fleet.instance import InstanceLaunchError
 from nanobot.fleet.probe import ProbeResult
 from nanobot.fleet.profile import SeatbeltProfileError
-from nanobot.fleet.state import InstanceRecord
+from nanobot.fleet.state import InstanceRecord, fleet_state_path
+from nanobot.fleet.stop import FleetStopReport
 from nanobot.fleet.supervisor import FleetPlan
 
 runner = CliRunner()
@@ -523,6 +530,173 @@ def test_the_fleet_option_is_required() -> None:
 
 
 # ----------------------------------------------------------------------------
+# ``fleet stop``
+# ----------------------------------------------------------------------------
+
+
+def stop(fleet_path: Path | str, *extra: str) -> object:
+    """Invoke ``fleet stop`` against ``fleet_path``."""
+    return runner.invoke(fleet_app, ["stop", "--fleet", str(fleet_path), *extra])
+
+
+def stopping(
+    monkeypatch: pytest.MonkeyPatch,
+    report: FleetStopReport,
+) -> list[tuple[Path, float]]:
+    """Replace the stop policy with one that returns ``report``; record its calls."""
+    calls: list[tuple[Path, float]] = []
+
+    def stop_it(state_path: Path, *, grace: float, **_: object) -> FleetStopReport:
+        calls.append((state_path, grace))
+        return report
+
+    monkeypatch.setattr(fleet_cli, "stop_fleet", stop_it)
+    return calls
+
+
+def report_for(state_path: Path, **overrides: object) -> FleetStopReport:
+    """A complete stop of one instance, unless a test says otherwise."""
+    fields: dict[str, object] = {
+        "state_path": state_path,
+        "targeted": ("alpha",),
+        "survivors": (),
+        "supervisor_pid": 4242,
+        "supervisor_stopped": True,
+    }
+    fields.update(overrides)
+    return FleetStopReport(**fields)  # type: ignore[arg-type]
+
+
+def test_stop_targets_the_state_file_beside_the_fleet_document(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The one place the state file's location is decided is ``fleet_state_path``."""
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    expected = fleet_state_path(fleet_path.resolve())
+    calls = stopping(monkeypatch, report_for(expected))
+
+    result = stop(fleet_path)
+
+    assert result.exit_code == 0
+    assert [path for path, _ in calls] == [expected]
+    assert "Stopped alpha" in result.output
+
+
+def test_stop_does_not_read_the_fleet_document_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A running fleet must stay stoppable after its declaration goes bad.
+
+    Validating here would be the one failure mode a stop command cannot afford:
+    confined processes still running, and the only command that can reach them
+    refusing to run.
+    """
+    fleet_path = tmp_path / "fleet.json"
+    fleet_path.write_text("{not json at all", encoding="utf-8")
+    expected = fleet_state_path(fleet_path.resolve())
+    stopping(monkeypatch, report_for(expected))
+    monkeypatch.setattr(fleet_cli, "validate_fleet_file", Spy())
+
+    assert stop(fleet_path).exit_code == 0
+
+
+def test_a_missing_state_file_is_refused(tmp_path: Path) -> None:
+    """Never started, or the wrong path — either way, not a fleet that stopped."""
+    result = stop(tmp_path / "fleet.json")
+
+    assert result.exit_code == 1
+    assert "state" in result.output.lower()
+
+
+def test_a_survivor_makes_the_command_exit_non_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``stop`` returning 0 has to mean the fleet is gone."""
+    fleet_path = separable_fleet(tmp_path, "alpha", "beta")
+    state_path = fleet_state_path(fleet_path.resolve())
+    stopping(
+        monkeypatch,
+        report_for(state_path, targeted=("alpha", "beta"), survivors=("beta",)),
+    )
+
+    result = stop(fleet_path)
+
+    assert result.exit_code == 1
+    assert "Stopped alpha" in result.output
+    assert "instances.beta" in result.output
+
+
+def test_a_surviving_supervisor_makes_the_command_exit_non_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    state_path = fleet_state_path(fleet_path.resolve())
+    stopping(monkeypatch, report_for(state_path, supervisor_stopped=False))
+
+    result = stop(fleet_path)
+
+    assert result.exit_code == 1
+    assert "4242" in result.output
+
+
+def test_stopping_a_fleet_that_is_not_running_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Idempotent, so an operator can run it twice without reading an error."""
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    state_path = fleet_state_path(fleet_path.resolve())
+    stopping(
+        monkeypatch,
+        report_for(state_path, targeted=(), supervisor_pid=None),
+    )
+
+    result = stop(fleet_path)
+
+    assert result.exit_code == 0
+    assert "No instance" in result.output
+
+
+def test_the_grace_option_reaches_the_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    state_path = fleet_state_path(fleet_path.resolve())
+    calls = stopping(monkeypatch, report_for(state_path))
+
+    assert stop(fleet_path, "--grace", "1.5").exit_code == 0
+    assert [grace for _, grace in calls] == [1.5]
+
+
+def test_a_negative_grace_is_refused(tmp_path: Path) -> None:
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    assert stop(fleet_path, "--grace", "-1").exit_code != 0
+
+
+def test_the_stop_fleet_option_is_required() -> None:
+    assert runner.invoke(fleet_app, ["stop"]).exit_code != 0
+
+
+def test_the_stop_fleet_path_is_expanded_before_anything_reads_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fleet_path = separable_fleet(tmp_path, "alpha")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    expected = fleet_state_path(fleet_path.resolve())
+    calls = stopping(monkeypatch, report_for(expected))
+
+    assert runner.invoke(fleet_app, ["stop", "--fleet", "~/fleet.json"]).exit_code == 0
+    assert [path for path, _ in calls] == [expected]
+
+
+# ----------------------------------------------------------------------------
 # Wiring
 # ----------------------------------------------------------------------------
 
@@ -536,6 +710,13 @@ def test_the_root_command_exposes_fleet_start() -> None:
     result = runner.invoke(root_app, ["fleet", "--help"])
     assert result.exit_code == 0
     assert "start" in result.output
+
+
+def test_the_root_command_exposes_fleet_stop() -> None:
+    """The callback must keep ``fleet`` a group now that it has two subcommands."""
+    result = runner.invoke(root_app, ["fleet", "--help"])
+    assert result.exit_code == 0
+    assert "stop" in result.output
 
 
 def test_the_supervisor_process_is_named_after_its_role(

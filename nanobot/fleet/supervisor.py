@@ -761,6 +761,18 @@ class FleetSupervisor:
 def signal_instance_tree(launched: LaunchedInstance, sig: int) -> None:
     """Send ``sig`` to an instance's whole process tree.
 
+    The owned-handle spelling of :func:`signal_process_tree`, which is where the
+    reasoning lives. Kept as the supervisor's own entry point because the
+    supervisor addresses instances by the handles it holds, while a caller
+    working from the state file — ``nanobot fleet stop`` — has only a pid and a
+    group.
+    """
+    signal_process_tree(launched.pid, launched.pgid, sig)
+
+
+def signal_process_tree(pid: int, process_group: int, sig: int) -> None:
+    """Send ``sig`` to the whole process tree led by ``pid`` in ``process_group``.
+
     The process group first, in one call, and then every descendant the group
     does not contain. Those exist in the ordinary course of an instance doing its
     job: nanobot's shell tool starts each command with ``start_new_session`` so
@@ -773,31 +785,31 @@ def signal_instance_tree(launched: LaunchedInstance, sig: int) -> None:
     dies its children are reparented away, and a walk done afterwards would find
     nothing to kill.
 
-    Falls back to the instance pid alone if the recorded group is the
-    supervisor's own. That guard is not defensive padding: the group is the
-    instance's tree only because it was spawned with ``start_new_session``, and
-    if that were ever dropped the child would join the supervisor's group and a
-    group-directed signal would kill the supervisor and every other instance with
-    it — and the descendant walk would sweep up every peer for good measure. The
-    failure would present as the fleet vanishing rather than as an error.
+    Falls back to ``pid`` alone if ``process_group`` is the caller's own. That
+    guard is not defensive padding: the group is the instance's tree only because
+    it was spawned with ``start_new_session``, and if that were ever dropped the
+    child would join the supervisor's group and a group-directed signal would
+    kill the supervisor and every other instance with it — and the descendant
+    walk would sweep up every peer for good measure. The failure would present as
+    the fleet vanishing rather than as an error.
 
     Already-dead targets are ignored: reaping is :meth:`FleetSupervisor.reap`'s
     job, and a race between the two is expected rather than exceptional.
     """
     killpg = getattr(os, "killpg", None)
-    if killpg is not None and launched.pgid > 0 and launched.pgid != _own_process_group():
-        strays = _strays(launched.pgid)
+    if killpg is not None and process_group > 0 and process_group != _own_process_group():
+        strays = _strays(process_group)
         try:
-            killpg(launched.pgid, sig)
+            killpg(process_group, sig)
         except OSError:
             pass
         else:
-            for pid in strays:
+            for stray in strays:
                 with suppress(OSError):
-                    os.kill(pid, sig)
+                    os.kill(stray, sig)
             return
     with suppress(OSError):
-        os.kill(launched.pid, sig)
+        os.kill(pid, sig)
 
 
 def _strays(process_group: int) -> tuple[int, ...]:

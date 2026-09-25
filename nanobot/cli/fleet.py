@@ -20,11 +20,19 @@ probe would report every instance as started and confined while each could read
 all of its peers. Starting nothing is strictly better than starting something
 that only looks confined, which is why the probe is a gate and not a warning.
 
+``nanobot fleet stop`` is the mirror image and shares none of that machinery. It
+never reads the fleet document: a fleet that is already running must be
+stoppable even if its declaration has since been edited, moved, or made invalid,
+and a ``stop`` that refused on a validation error would leave confined processes
+running with the only command that can reach them refusing to run. All it needs
+is the state file, which :mod:`nanobot.fleet.stop` turns into process trees.
+
 Deliberately *not* here: the decision logic. This module reads as a sequence of
 calls into :mod:`nanobot.fleet` because every judgement it could make has an
 owner there already — what counts as a separable layout, what a profile must
-deny, what proves a deny bound, and when an instance is dead. Its own job is to
-turn those results into an exit code and a message an operator can act on.
+deny, what proves a deny bound, when an instance is dead, and what belongs to an
+instance's tree. Its own job is to turn those results into an exit code and a
+message an operator can act on.
 """
 
 from __future__ import annotations
@@ -41,7 +49,12 @@ from nanobot.fleet.config import FleetConfigError
 from nanobot.fleet.instance import InstanceLaunchError
 from nanobot.fleet.probe import ProbeResult, probe_fleet_confinement, unproven
 from nanobot.fleet.profile import SeatbeltProfileError
-from nanobot.fleet.state import FleetStateError, InstanceRecord
+from nanobot.fleet.state import FleetStateError, InstanceRecord, fleet_state_path
+from nanobot.fleet.stop import (
+    DEFAULT_STOP_GRACE_SECONDS,
+    FleetStopReport,
+    stop_fleet,
+)
 from nanobot.fleet.supervisor import FleetPlan, prepare_fleet, start_fleet
 from nanobot.fleet.validate import (
     FleetValidationError,
@@ -61,10 +74,9 @@ def fleet() -> None:
     """Group the fleet subcommands.
 
     Present only so that ``fleet`` stays a command *group*: Typer collapses a
-    single-command app into that command, and this app has exactly one
-    subcommand today. Without the callback, ``nanobot fleet start`` would be
-    spelled ``nanobot fleet`` until the second subcommand landed and silently
-    change back when it did.
+    single-command app into that command. It must stay even though this app now
+    has two subcommands — a future edit that left only one would silently
+    re-spell that one as ``nanobot fleet``.
     """
 
 
@@ -79,6 +91,56 @@ def fleet_start(
     _require_proven_confinement(plan)
     _announce(plan)
     _report(_supervise(plan))
+
+
+@fleet_app.command("stop")
+def fleet_stop(
+    fleet: str = typer.Option(..., "--fleet", "-f", help="Path to the fleet file"),
+    grace: float = typer.Option(
+        DEFAULT_STOP_GRACE_SECONDS,
+        "--grace",
+        help="Seconds to allow after SIGTERM before escalating to SIGKILL.",
+        min=0.0,
+    ),
+) -> None:
+    """Terminate every instance's process tree, then the supervisor.
+
+    Returns only once nothing of the fleet is left, and exits non-zero naming
+    whatever would not die.
+    """
+    state_path = fleet_state_path(Path(fleet).expanduser().resolve(strict=False))
+    try:
+        report = stop_fleet(state_path, grace=grace)
+    except FleetStateError as exc:
+        _refuse(str(exc))
+    _report_stop(report)
+
+
+def _report_stop(report: FleetStopReport) -> None:
+    """Say what stopped, and refuse to claim success over a survivor."""
+    if not report.targeted:
+        console.print("[dim]No instance of this fleet was running.[/dim]")
+        return
+    for name in report.stopped:
+        console.print(f"Stopped {escape(name)}")
+    if report.supervisor_pid is not None and report.supervisor_stopped:
+        console.print(f"Stopped the supervisor (pid {report.supervisor_pid})")
+    if report.complete:
+        return
+    _refuse(
+        "\n".join(
+            [
+                "This fleet was not fully stopped.",
+                "",
+                *(f"  instances.{name} is still running" for name in report.survivors),
+                *(
+                    [f"  the supervisor (pid {report.supervisor_pid}) is still running"]
+                    if not report.supervisor_stopped
+                    else []
+                ),
+            ]
+        )
+    )
 
 
 def _validated(path: Path) -> tuple[ResolvedInstance, ...]:

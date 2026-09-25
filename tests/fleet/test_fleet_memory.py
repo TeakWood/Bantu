@@ -597,6 +597,82 @@ def test_the_child_walk_rejects_non_positive_pids(monkeypatch: pytest.MonkeyPatc
     assert memory.process_child_pids(-1) is None
 
 
+@darwin_only
+def test_the_parent_lookup_reads_a_real_parent() -> None:
+    """The offsets are hard-coded, so check them against a pid we already know."""
+    assert memory.process_parent_pid(os.getpid()) == os.getppid()
+
+
+@darwin_only
+def test_the_parent_lookup_refuses_what_it_cannot_read() -> None:
+    # ``proc_pidinfo(0, …)`` answers for the kernel, which is never what a caller
+    # holding an instance pid meant to ask; and nothing can hold a pid this high.
+    assert memory.process_parent_pid(0) is None
+    assert memory.process_parent_pid(-1) is None
+    assert memory.process_parent_pid(900_000) is None
+
+
+def test_a_parent_lookup_whose_pid_does_not_match_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The only guard against the struct layout drifting, so it must fail closed.
+
+    A kernel that moved the fields would answer with a well-formed buffer whose
+    ``pbi_pid`` is not the pid that was asked for. Returning the value at the
+    ppid offset anyway would aim ``fleet stop``'s escalation at whatever process
+    that number happened to name.
+    """
+
+    def bsdinfo(_pid: int, _flavor: int, _arg: int, buffer: Any, _size: int) -> int:
+        struct.pack_into("=I", buffer, memory._PBI_PID_OFFSET, 4243)
+        struct.pack_into("=I", buffer, memory._PBI_PPID_OFFSET, 77)
+        return memory._PROC_BSDINFO_SIZE
+
+    _fake_handles(monkeypatch, lambda *_args: 0, bsdinfo)
+
+    assert memory.process_parent_pid(4242) is None
+
+
+def test_a_parent_lookup_that_agrees_on_the_pid_is_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def bsdinfo(pid: int, _flavor: int, _arg: int, buffer: Any, _size: int) -> int:
+        struct.pack_into("=I", buffer, memory._PBI_PID_OFFSET, pid)
+        struct.pack_into("=I", buffer, memory._PBI_PPID_OFFSET, 77)
+        return memory._PROC_BSDINFO_SIZE
+
+    _fake_handles(monkeypatch, lambda *_args: 0, bsdinfo)
+
+    assert memory.process_parent_pid(4242) == 77
+
+
+def test_a_short_parent_lookup_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A partially written struct is a layout mismatch, not a usable answer.
+
+    The buffer carries a *matching* pid on purpose, so this is the length check
+    being tested and not the cross-check below it. A short write that happened to
+    agree about the pid is exactly the case where the two guards diverge.
+    """
+
+    def short_write(pid: int, _flavor: int, _arg: int, buffer: Any, _size: int) -> int:
+        struct.pack_into("=I", buffer, memory._PBI_PID_OFFSET, pid)
+        struct.pack_into("=I", buffer, memory._PBI_PPID_OFFSET, 77)
+        return 8
+
+    _fake_handles(monkeypatch, lambda *_args: 0, short_write)
+
+    assert memory.process_parent_pid(4242) is None
+
+
+def test_an_unsupported_platform_has_no_parent_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(memory.sys, "platform", "linux")
+    memory._darwin_libproc.cache_clear()
+
+    assert memory.process_parent_pid(os.getpid()) is None
+
+
 def test_an_unsupported_platform_has_no_child_walk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(memory.sys, "platform", "linux")
     memory._darwin_proc_listchildpids.cache_clear()
