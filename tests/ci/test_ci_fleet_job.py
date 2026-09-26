@@ -133,7 +133,13 @@ def test_every_carved_out_path_is_still_run_serially(path: str) -> None:
 
 
 def test_the_fleet_job_runs_on_macos() -> None:
-    """Seatbelt confinement is macOS-only, which is why the job is separate."""
+    """Seatbelt confinement is macOS-only, which is why the job is separate.
+
+    macOS bills at ten times the Linux rate, so this job is an exception to
+    CONTRIBUTING.md's runner allowlist rather than an ordinary choice. That the
+    exception is written down, and that no second one appears, is enforced by
+    ``test_ci_runner_policy.py``; this test only checks the job earns it.
+    """
     _, job = _fleet_job()
     assert str(job["runs-on"]).startswith("macos")
 

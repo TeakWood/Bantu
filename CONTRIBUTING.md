@@ -127,11 +127,23 @@ In practice:
 If your PR touches `.github/workflows/`, please keep the CI within
 GitHub Actions' free tier:
 
-- Use only standard GitHub-hosted runners (`ubuntu-latest`, `windows-latest`)
-- Avoid macOS runners, larger runners (`*-cores`, `*-xlarge`, `*-gpu`),
-  and self-hosted runners
+- Use only standard GitHub-hosted runners: `ubuntu-latest`, `windows-latest`
+- Avoid larger runners (`*-cores`, `*-xlarge`, `*-gpu`) and self-hosted runners
 - Avoid uploading large artifacts or using long retention
 - Avoid paid Marketplace actions
+
+macOS runners bill at ten times the Linux rate, so each one needs a stated
+reason. Approved exceptions:
+
+- `macos_fleet` in `.github/workflows/ci.yml` on `macos-latest` — fleet
+  confinement is enforced by macOS Seatbelt, so `tests/fleet` can only prove
+  anything there; on Linux and Windows those tests skip.
+
+Adding another macOS job, or any runner outside the allowlist above, means
+editing this section in the same PR. `tests/ci/test_ci_runner_policy.py` reads
+the allowlist and the exception list out of this text and fails on a workflow
+that steps outside them — including a macOS job that is not listed here, and a
+listed exception that no longer exists.
 
 If your change genuinely needs to step outside this, please call it out
 explicitly in the PR description so it can be discussed before merge.
