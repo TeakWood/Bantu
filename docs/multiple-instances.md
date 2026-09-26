@@ -2,6 +2,10 @@
 
 Run multiple nanobot instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. Optionally pass `--workspace` during `onboard` when you want to initialize or update the saved workspace for a specific instance.
 
+> **The separation on this page is convention only, not enforcement.** Every instance runs as the same OS user, so each one can read and write every other one's workspace, config file, and session store, and each inherits the whole environment including every API key you exported. `tools.restrictToWorkspace` and the exec sandbox are checks *inside* the agent being contained, so a bug, a misconfiguration, or a prompt-injected agent gets past them. Separate directories keep instances from colliding by accident; they do not keep one instance out of another's files.
+>
+> For OS-enforced separation, see [Fleet](./fleet.md). A fleet runs the same instances under one supervisor with each one confined by macOS Seatbelt: every peer's workspace and config directory is denied by the kernel, each instance sees only the environment variables its own entry names, and its whole process tree is capped. Read the [limits](./fleet.md#limits) too — a fleet separates instances from each other, but it does not deny the rest of your home directory and does not isolate the network.
+
 ## Quick Start
 
 If you want each instance to have its own dedicated workspace from the start, pass both `--config` and `--workspace` during onboarding.
@@ -143,3 +147,4 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 - Session data follows the active config directory; use a different workspace per instance to isolate memory, skills, and the stable session namespace ID
 - `--workspace` overrides the workspace defined in the config file
 - Cron jobs are stored in the active workspace; runtime media/state is derived from the config directory
+- Nothing here prevents one instance from reading another's files or credentials; use a [fleet](./fleet.md) when you need that boundary enforced by the OS

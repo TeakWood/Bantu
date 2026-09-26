@@ -262,6 +262,45 @@ http://127.0.0.1:18790/health
 
 The bundled WebUI is served by the WebSocket channel, usually on port `8765`, not by the gateway health endpoint.
 
+## Fleet
+
+`nanobot fleet` runs several instances under one supervisor, each in its own OS process and confined by macOS Seatbelt so that it cannot read or write any other instance's workspace or config directory. It is the OS-enforced alternative to the convention-only separation in [Multiple Instances](./multiple-instances.md). **macOS only**: on other platforms `fleet start` refuses rather than running an unconfined fleet.
+
+| Command | Description |
+|---|---|
+| `nanobot fleet start --fleet <path>` | Validate the fleet, prove every instance's confinement binds, then start all instances and supervise them in the foreground |
+| `nanobot fleet status --fleet <path>` | Print a table of every instance, reconciling liveness as it reads |
+| `nanobot fleet status --fleet <path> --json` | Print the same facts as a JSON array, one object per instance |
+| `nanobot fleet stop --fleet <path>` | Terminate every instance's whole process tree, then the supervisor, and block until nothing is left |
+| `nanobot fleet stop --fleet <path> --grace <seconds>` | Set how long `SIGTERM` is given before escalating to `SIGKILL` (default `5.0`) |
+
+`--fleet` (`-f`) points at a JSON fleet file declaring each instance's config path, launch mode, memory cap, and the environment variable names it may inherit:
+
+```json
+{
+  "instances": {
+    "telegram": {
+      "config": "~/fleet/telegram/config.json",
+      "mode": "gateway",
+      "memoryLimitMb": 1024,
+      "env": ["ANTHROPIC_API_KEY"]
+    }
+  }
+}
+```
+
+`start` holds the terminal it was launched in, so `status` and `stop` are run from a second shell — fleet state is a file beside the fleet document, not something the supervisor has to be asked for. A validation failure or an unproven profile exits non-zero, names the offending instance, and starts nothing.
+
+```bash
+nanobot fleet start --fleet ~/fleet/fleet.json     # first shell
+nanobot fleet status --fleet ~/fleet/fleet.json --json
+nanobot fleet stop --fleet ~/fleet/fleet.json
+```
+
+Each `--json` object carries `name`, `pid` (the instance's own process, never the supervisor's), `state`, `exit_reason`, `workspace`, `config_dir`, and `memory_limit_mb`.
+
+See [Fleet](./fleet.md) for the fleet file format, the confinement guarantees, and — importantly — the [limits](./fleet.md#limits): the rest of your home directory is not denied, there is no network isolation, no automatic restart, and no CPU or process limits.
+
 ## Local Triggers
 
 `nanobot trigger` delivers one local message to a trigger that was created from

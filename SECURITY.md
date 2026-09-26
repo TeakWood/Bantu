@@ -102,6 +102,30 @@ Neither backend restricts network access.
 
 Enabling the sandbox also automatically activates `restrictToWorkspace` for file tools.
 
+**Fleet confinement (macOS only):**
+
+`nanobot fleet` runs several instances under one supervisor and confines each one with a Seatbelt profile applied to the instance process and inherited by everything it starts. It addresses a different boundary from the exec sandbox above: the exec sandbox confines *one shell command* inside one instance, while a fleet confines *one instance* against its peers. See [docs/fleet.md](docs/fleet.md).
+
+Each instance's profile **denies** reading and writing:
+
+- every other instance's workspace
+- every other instance's config directory, which holds its sessions, media, cron, and logs
+- the fleet file
+- the supervisor's state file, which maps every instance's directories and is written `0600`
+
+Each instance is also launched under `env -i` with only `PATH`, `HOME`, `LANG`, `TMPDIR`, and the environment variable names its own fleet entry lists, so one instance's provider keys do not reach another. Its whole process tree is capped by `memoryLimitMb`. Because the kernel enforces this on the process rather than the agent enforcing it on itself, the separation holds with `restrictToWorkspace` false and the exec sandbox disabled. Before starting anything, `nanobot fleet start` runs each profile and observes a denied read fail — `sandbox-exec` accepts a deny naming a path that does not exist, confines nothing, and exits 0, so a profile that cannot be proven to bind is treated as a refusal.
+
+**What a fleet does not do** — do not over-trust this boundary:
+
+- **The rest of the home directory is not denied.** The profile is allow-by-default: it denies each instance's peers and the fleet's own files, and permits everything else. An instance can still read and write `~/.ssh`, `~/.aws`, and every other file your user account can reach. Enable the exec sandbox, use a dedicated OS user, or use a VM if you need that closed.
+- **No network isolation.** An instance can reach the internet, your LAN, and other instances' loopback ports.
+- **No automatic restart.** An instance that exits stays exited and is reported as exited.
+- **No CPU, file-descriptor, disk, or process-count limits.** Memory is the only capped resource, and it is sampled, so a short burst can exceed the cap without being caught.
+- **No per-named-agent isolation.** The unit of confinement is the instance process; every session, subagent, skill, MCP server, and shell command inside one instance shares that instance's boundary and credentials.
+- **The supervisor is not confined** and runs with your full environment.
+- **Same OS user.** Like the exec sandbox, this is filesystem containment, not a VM or a separate user identity.
+- **macOS only.** There is no Linux or Windows fleet backend; `nanobot fleet start` refuses on those platforms rather than running an unconfined fleet.
+
 **Blocked patterns:**
 - `rm -rf /` - Root filesystem deletion
 - Fork bombs
