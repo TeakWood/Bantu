@@ -148,19 +148,21 @@ jobs:
             coverage: false
             # CLI command tests assert exact Rich terminal output; run them
             # serially below so xdist cannot change terminal-width rendering.
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"
+            # Fleet tests bind fixed ports, spawn real process trees and send
+            # group signals; they run serially in the macos_fleet job.
+            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py --ignore=tests/fleet"
           - name: latest, 3.14 + coverage
             os: ubuntu-latest
             python-version: "3.14"
             coverage: true
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py"
+            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py --ignore=tests/fleet"
           - name: Windows, 3.14
             os: windows-latest
             python-version: "3.14"
             coverage: false
             # Real PowerShell/process-tree tests run serially in a separate
             # job. Keep them out of xdist so workers never share a console.
-            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py --ignore=tests/tools/test_exec_platform.py"
+            pytest_args: "-n auto --dist loadfile --ignore=tests/cli/test_commands.py --ignore=tests/tools/test_exec_platform.py --ignore=tests/fleet"
 
     steps:
       - uses: actions/checkout@v4
@@ -263,6 +265,45 @@ jobs:
         run: >-
           uv run --no-sync python -m pytest
           tests/tools/test_exec_platform.py
+          --durations=25 --durations-min=1.0
+
+  macos_fleet:
+    name: Python (macOS fleet isolation)
+    needs: changes
+    if: needs.changes.outputs.python_required == 'true'
+    # Fleet confinement is enforced by macOS Seatbelt, so these tests only have
+    # anything to prove on macOS; elsewhere they skip.
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Verify dependency consistency
+        run: uv pip check
+
+      # Fleet tests start supervisors, launch confined instances on real ports
+      # and signal whole process groups. Running them outside xdist keeps
+      # workers from sharing ports or racing each other's process trees, and
+      # keeps a group signal from reaching another worker's children.
+      - name: Run fleet tests serially
+        run: >-
+          uv run --no-sync python -m pytest
+          tests/fleet
           --durations=25 --durations-min=1.0
 
   webui:
