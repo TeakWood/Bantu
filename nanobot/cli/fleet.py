@@ -27,6 +27,23 @@ and a ``stop`` that refused on a validation error would leave confined processes
 running with the only command that can reach them refusing to run. All it needs
 is the state file, which :mod:`nanobot.fleet.stop` turns into process trees.
 
+``nanobot fleet status`` needs even less: it reads that same file and writes
+nothing at all. Both facts are requirements rather than conveniences. A
+supervisor holds the foreground of the terminal it was started in, so status has
+to be answerable from a *second* shell — which is why fleet state is a file in
+the first place, and not something a supervisor would have to be asked for. And
+because the supervisor is the file's only writer, a reader that repaired or
+rewrote what it found would race the very ``os.replace`` it was reading; so
+status derives liveness on the way past (:func:`~nanobot.fleet.state.read_fleet_state`
+reconciles every pid against a PID-reuse-safe identity) and leaves the bytes
+exactly as it found them. Status also never judges: an exited instance is a
+report, not an error, so it exits zero. Only a state file that cannot be read or
+believed is a refusal, for the reason
+:class:`~nanobot.fleet.state.FleetStateError` gives — answering "no instances"
+over an unreadable file would tell an operator the fleet is stopped, and the next
+thing that operator does is start a second fleet on the same ports and
+workspaces.
+
 Deliberately *not* here: the decision logic. This module reads as a sequence of
 calls into :mod:`nanobot.fleet` because every judgement it could make has an
 owner there already — what counts as a separable layout, what a profile must
@@ -37,6 +54,7 @@ message an operator can act on.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import NoReturn
@@ -44,12 +62,19 @@ from typing import NoReturn
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.table import Table
 
 from nanobot.fleet.config import FleetConfigError
 from nanobot.fleet.instance import InstanceLaunchError
 from nanobot.fleet.probe import ProbeResult, probe_fleet_confinement, unproven
 from nanobot.fleet.profile import SeatbeltProfileError
-from nanobot.fleet.state import FleetStateError, InstanceRecord, fleet_state_path
+from nanobot.fleet.state import (
+    FleetStateError,
+    InstanceRecord,
+    fleet_state_path,
+    read_fleet_state,
+    status_payload,
+)
 from nanobot.fleet.stop import (
     DEFAULT_STOP_GRACE_SECONDS,
     FleetStopReport,
@@ -93,6 +118,78 @@ def fleet_start(
     _report(_supervise(plan))
 
 
+@fleet_app.command("status")
+def fleet_status(
+    fleet: str = typer.Option(..., "--fleet", "-f", help="Path to the fleet file"),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the machine-readable JSON array instead of a table.",
+    ),
+) -> None:
+    """Report every instance of a fleet, reconciling liveness as it reads.
+
+    Answerable from a second shell while the supervisor holds the first, and
+    writes nothing: see this module's docstring for why both matter. Exits zero
+    whatever the instances are doing — only an unreadable state file is a refusal.
+    """
+    state_path = _state_path(fleet)
+    try:
+        records = read_fleet_state(state_path)
+    except FleetStateError as exc:
+        _refuse(str(exc))
+    if as_json:
+        _print_status_json(records)
+        return
+    _print_status_table(records, state_path)
+
+
+def _print_status_json(records: Sequence[InstanceRecord]) -> None:
+    """Write the status array, and nothing else, to stdout.
+
+    Through ``typer.echo`` rather than the rich console deliberately: the console
+    wraps at the terminal width, so a long workspace path would be folded across
+    lines and the document a consumer parsed would depend on how wide their
+    window happened to be. What each object contains is
+    :func:`~nanobot.fleet.state.status_payload`'s decision, not this module's.
+    """
+    typer.echo(json.dumps([status_payload(record) for record in records], indent=2))
+
+
+def _print_status_table(
+    records: Sequence[InstanceRecord],
+    state_path: Path,
+) -> None:
+    """Render the same facts for a person, naming the file they came from."""
+    if not records:
+        console.print("[dim]No instance has been started for this fleet.[/dim]")
+        console.print(f"State: {escape(str(state_path))}")
+        return
+    table = Table(title="Fleet Status")
+    table.add_column("Instance", style="cyan")
+    table.add_column("State")
+    table.add_column("PID", justify="right")
+    table.add_column("Exit reason")
+    table.add_column("Memory", justify="right")
+    # Folded rather than truncated: a workspace path an operator cannot read in
+    # full is the one fact this table exists to show them.
+    table.add_column("Workspace", overflow="fold")
+    table.add_column("Config", overflow="fold")
+    for record in records:
+        running = record.state == "running"
+        table.add_row(
+            escape(record.name),
+            "[green]running[/green]" if running else "[dim]exited[/dim]",
+            str(record.pid),
+            escape(record.exit_reason or "-"),
+            f"{record.memory_limit_mb} MB",
+            escape(str(record.workspace)),
+            escape(str(record.config_dir)),
+        )
+    console.print(table)
+    console.print(f"State: {escape(str(state_path))}")
+
+
 @fleet_app.command("stop")
 def fleet_stop(
     fleet: str = typer.Option(..., "--fleet", "-f", help="Path to the fleet file"),
@@ -108,12 +205,24 @@ def fleet_stop(
     Returns only once nothing of the fleet is left, and exits non-zero naming
     whatever would not die.
     """
-    state_path = fleet_state_path(Path(fleet).expanduser().resolve(strict=False))
     try:
-        report = stop_fleet(state_path, grace=grace)
+        report = stop_fleet(_state_path(fleet), grace=grace)
     except FleetStateError as exc:
         _refuse(str(exc))
     _report_stop(report)
+
+
+def _state_path(fleet: str) -> Path:
+    """Where the supervisor for the fleet declared at ``fleet`` keeps its state.
+
+    The one expression the two commands that never read the fleet document use,
+    shared for the reason :func:`~nanobot.fleet.state.fleet_state_path` exists at
+    all: ``prepare_fleet`` canonicalises the fleet path before deriving the state
+    path, so a command that derived it from a different spelling would look for a
+    file the supervisor does not write — and would report an unstarted fleet
+    rather than an error.
+    """
+    return fleet_state_path(Path(fleet).expanduser().resolve(strict=False))
 
 
 def _report_stop(report: FleetStopReport) -> None:

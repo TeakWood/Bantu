@@ -240,6 +240,33 @@ class InstanceRecord:
         }
 
 
+def status_payload(record: InstanceRecord) -> dict[str, object]:
+    """One record as ``nanobot fleet status --json`` publishes it.
+
+    Exactly :data:`RECORD_FIELDS`, projected out of :meth:`InstanceRecord.payload`
+    rather than assembled a second time, so a published field cannot drift in
+    name or in type from the one the supervisor writes. The command that renders
+    this therefore makes no decision about what a fleet's status *is*; that
+    belongs here, beside the writer.
+
+    The identity record is deliberately not published, and its absence is the
+    contract rather than an oversight. It is an internal token for telling one
+    process from another that happens to hold the same pid: its shape is
+    platform-specific — on macOS the bare ``identity`` is a process *group* —
+    so publishing it would freeze a private format into an interface, and would
+    invite a consumer to signal a group that only the supervisor and
+    :mod:`nanobot.fleet.stop` are in a position to address.
+
+    Note what is absent for a second reason: the supervisor's own pid. Nothing in
+    this file records it — :func:`nanobot.fleet.stop._supervisor` has to recover
+    it from parentage precisely because the state file does not know it — so an
+    instance's ``pid`` cannot be the supervisor's simply because there is nowhere
+    for that number to come from.
+    """
+    payload = record.payload()
+    return {key: payload[key] for key in RECORD_FIELDS}
+
+
 def fleet_state_path(fleet_path: str | Path) -> Path:
     """Where the supervisor keeps its state for the fleet declared at ``fleet_path``.
 
